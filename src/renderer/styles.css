@@ -1,0 +1,187 @@
+.dx-result {
+  --dx-border: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  --dx-grid-line: rgba(128, 128, 128, 0.16);
+  --dx-surface: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  padding: 2px 0 4px;
+}
+
+.dx-viewport {
+  position: relative;
+  overflow: auto;
+  max-width: 100%;
+  border: 1px solid var(--dx-border);
+  border-radius: 4px;
+  outline: none;
+  background: var(--dx-surface);
+}
+
+.dx-viewport:focus-visible {
+  border-color: var(--vscode-focusBorder);
+}
+
+.dx-sizer {
+  position: relative;
+}
+
+.dx-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  height: 30px;
+  background: var(--vscode-editorWidget-background, var(--dx-surface));
+  border-bottom: 1px solid var(--dx-border);
+}
+
+.dx-row {
+  position: absolute;
+  left: 0;
+  display: flex;
+  height: 24px;
+}
+
+.dx-row.odd .dx-cell {
+  background: var(--vscode-tree-tableOddRowsBackground, rgba(128, 128, 128, 0.04));
+}
+
+.dx-row:hover .dx-cell {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.dx-spacer {
+  flex: none;
+}
+
+.dx-cell {
+  flex: none;
+  box-sizing: border-box;
+  padding: 0 8px;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-right: 1px solid var(--dx-grid-line);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+  cursor: default;
+}
+
+.dx-cell.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dx-cell.null {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.dx-cell.loading::after {
+  content: '';
+  display: inline-block;
+  width: 60%;
+  height: 8px;
+  border-radius: 4px;
+  vertical-align: middle;
+  background: var(--dx-grid-line);
+}
+
+.dx-row .dx-cell.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.dx-rownum {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, var(--vscode-descriptionForeground));
+  background: var(--dx-surface) !important;
+  border-right: 1px solid var(--dx-border);
+}
+
+.dx-header .dx-rownum {
+  background: var(--vscode-editorWidget-background, var(--dx-surface)) !important;
+}
+
+.dx-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 30px;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  font-weight: 600;
+}
+
+.dx-head .dx-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dx-head .dx-type {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  font-weight: normal;
+  letter-spacing: 0.03em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.dx-resize:hover {
+  background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+.dx-empty {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  padding: 0 10px;
+  line-height: 24px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 4px 2px 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-bound {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.dx-banner {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+}
+
+.dx-plot {
+  width: 100%;
+  min-height: 120px;
+}
+
+.dx-plot-error {
+  color: var(--vscode-errorForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: pre-wrap;
+}

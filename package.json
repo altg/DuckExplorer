@@ -1,0 +1,234 @@
+{
+  "name": "duckexplorer",
+  "displayName": "DuckExplorer",
+  "description": "A DuckDB UI-style analysis workspace: attach DuckDB databases, browse schemas, run SQL notebooks and chart results with Python.",
+  "version": "0.1.0",
+  "publisher": "duckexplorer",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Data Science",
+    "Notebooks",
+    "Visualization"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onNotebook:duckexplorer-notebook",
+    "onView:duckexplorer.schema"
+  ],
+  "contributes": {
+    "notebooks": [
+      {
+        "type": "duckexplorer-notebook",
+        "displayName": "DuckDB Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.duckbook"
+          }
+        ]
+      }
+    ],
+    "notebookRenderer": [
+      {
+        "id": "duckexplorer-renderer",
+        "displayName": "DuckExplorer Results",
+        "entrypoint": "./dist/renderer.js",
+        "mimeTypes": [
+          "application/vnd.duckexplorer.table+json",
+          "application/vnd.duckexplorer.plotly+json"
+        ],
+        "requiresMessaging": "optional"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "duckexplorer",
+          "title": "DuckExplorer",
+          "icon": "media/duck.svg"
+        }
+      ]
+    },
+    "views": {
+      "duckexplorer": [
+        {
+          "id": "duckexplorer.schema",
+          "name": "Databases"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "duckexplorer.schema",
+        "contents": "Attach a DuckDB database file to browse its schemas, tables and columns.\n[Add Database](command:duckexplorer.addDatabase)\n[New Notebook](command:duckexplorer.newNotebook)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "duckexplorer.addDatabase",
+        "title": "Add Database…",
+        "category": "DuckExplorer",
+        "icon": "$(add)"
+      },
+      {
+        "command": "duckexplorer.detachDatabase",
+        "title": "Detach Database",
+        "category": "DuckExplorer",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "duckexplorer.refresh",
+        "title": "Refresh",
+        "category": "DuckExplorer",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "duckexplorer.newNotebook",
+        "title": "New DuckDB Notebook",
+        "category": "DuckExplorer",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "duckexplorer.previewTable",
+        "title": "Preview Table",
+        "category": "DuckExplorer",
+        "icon": "$(table)"
+      },
+      {
+        "command": "duckexplorer.copyName",
+        "title": "Copy Name",
+        "category": "DuckExplorer"
+      },
+      {
+        "command": "duckexplorer.restartKernel",
+        "title": "Restart Kernel",
+        "category": "DuckExplorer",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "duckexplorer.showLog",
+        "title": "Show Kernel Log",
+        "category": "DuckExplorer",
+        "icon": "$(output)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "duckexplorer.addDatabase",
+          "when": "view == duckexplorer.schema",
+          "group": "navigation@1"
+        },
+        {
+          "command": "duckexplorer.newNotebook",
+          "when": "view == duckexplorer.schema",
+          "group": "navigation@2"
+        },
+        {
+          "command": "duckexplorer.refresh",
+          "when": "view == duckexplorer.schema",
+          "group": "navigation@3"
+        },
+        {
+          "command": "duckexplorer.restartKernel",
+          "when": "view == duckexplorer.schema",
+          "group": "overflow"
+        },
+        {
+          "command": "duckexplorer.showLog",
+          "when": "view == duckexplorer.schema",
+          "group": "overflow"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "duckexplorer.previewTable",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "group": "inline"
+        },
+        {
+          "command": "duckexplorer.previewTable",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "group": "1_main@1"
+        },
+        {
+          "command": "duckexplorer.copyName",
+          "when": "view == duckexplorer.schema && viewItem != message",
+          "group": "1_main@2"
+        },
+        {
+          "command": "duckexplorer.detachDatabase",
+          "when": "view == duckexplorer.schema && viewItem == database.attached",
+          "group": "inline"
+        },
+        {
+          "command": "duckexplorer.detachDatabase",
+          "when": "view == duckexplorer.schema && viewItem == database.attached",
+          "group": "2_manage@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "duckexplorer.previewTable",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.copyName",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.detachDatabase",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DuckExplorer",
+      "properties": {
+        "duckexplorer.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Python interpreter for the DuckExplorer kernel. Leave empty to use the interpreter selected in the Python extension, then `python` on PATH."
+        },
+        "duckexplorer.pageSize": {
+          "type": "number",
+          "default": 200,
+          "minimum": 10,
+          "maximum": 5000,
+          "description": "Rows fetched per page in the results grid."
+        },
+        "duckexplorer.maxPandasRows": {
+          "type": "number",
+          "default": 1000000,
+          "minimum": 0,
+          "description": "Maximum rows copied into the pandas DataFrame (`df` and named results) after each SQL cell. 0 disables the DataFrame copy."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "npm run typecheck && node esbuild.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p src/renderer --noEmit",
+    "watch": "node esbuild.mjs --watch",
+    "compile-tests": "tsc -p test",
+    "pretest": "npm run compile && npm run compile-tests",
+    "test": "node out-test/runTest.js",
+    "test:python": "python -m pytest python/tests -q"
+  },
+  "dependencies": {
+    "@vscode/python-extension": "^1.0.6"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.20.5",
+    "@types/vscode": "~1.100.0",
+    "@types/vscode-notebook-renderer": "^1.72.4",
+    "@vscode/test-electron": "^3.1.0",
+    "esbuild": "^0.28.2",
+    "mocha": "^11.8.0",
+    "plotly.js-dist-min": "^4.1.2",
+    "typescript": "~5.9.3"
+  }
+}

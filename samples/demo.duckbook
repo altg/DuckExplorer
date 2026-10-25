@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "cells": [
+  {
+   "kind": "markdown",
+   "language": "markdown",
+   "source": "# DuckExplorer demo\n\nA synthetic shop dataset: customers, products, orders and order lines for 2023–2024.\nBuild it once with `python samples/make_sample_db.py`, then run the cells top to bottom (**Run All**)."
+  },
+  {
+   "kind": "code",
+   "language": "sql",
+   "source": "-- Relative paths resolve against this notebook's folder.\nATTACH IF NOT EXISTS 'demo.duckdb' AS demo (READ_ONLY);\nUSE demo;"
+  },
+  {
+   "kind": "markdown",
+   "language": "markdown",
+   "source": "## Query with SQL\n\nEvery SQL result is available to Python cells as `df`. A first line of `-- name: monthly` also keeps it as `monthly`."
+  },
+  {
+   "kind": "code",
+   "language": "sql",
+   "source": "-- name: monthly\nSELECT date_trunc('month', o.order_date) AS month,\n       p.category,\n       round(sum(oi.quantity * oi.unit_price * (1 - oi.discount)), 2) AS revenue\nFROM orders o\nJOIN order_items oi USING (order_id)\nJOIN products p USING (product_id)\nWHERE o.status <> 'cancelled'\nGROUP BY ALL\nORDER BY month, category;"
+  },
+  {
+   "kind": "code",
+   "language": "python",
+   "source": "import plotly.express as px\n\npx.line(monthly, x=\"month\", y=\"revenue\", color=\"category\",\n        title=\"Monthly revenue by category\", markers=True)"
+  },
+  {
+   "kind": "code",
+   "language": "sql",
+   "source": "SELECT c.country,\n       c.segment,\n       count(DISTINCT o.order_id) AS orders,\n       round(sum(oi.quantity * oi.unit_price * (1 - oi.discount)), 2) AS revenue\nFROM customers c\nJOIN orders o USING (customer_id)\nJOIN order_items oi USING (order_id)\nGROUP BY ALL\nORDER BY revenue DESC;"
+  },
+  {
+   "kind": "code",
+   "language": "python",
+   "source": "import matplotlib.pyplot as plt\n\n# df is the result of the SQL cell above.\nby_country = df.groupby(\"country\")[\"revenue\"].sum().sort_values()\n\nfig, ax = plt.subplots(figsize=(8, 4.5))\nby_country.plot.barh(ax=ax, color=\"#4c8bf5\")\nax.set_title(\"Revenue by country\")\nax.set_xlabel(\"Revenue\")\nax.set_ylabel(\"\")\nax.spines[[\"top\", \"right\"]].set_visible(False)"
+  },
+  {
+   "kind": "markdown",
+   "language": "markdown",
+   "source": "## Python ↔ SQL\n\nDataFrames created in Python cells can be queried from SQL cells by name."
+  },
+  {
+   "kind": "code",
+   "language": "python",
+   "source": "import pandas as pd\n\ntargets = pd.DataFrame({\n    \"category\": [\"Electronics\", \"Home\", \"Sports\", \"Garden\", \"Toys\", \"Beauty\", \"Books\", \"Grocery\"],\n    \"monthly_target\": [600_000, 280_000, 190_000, 160_000, 100_000, 110_000, 55_000, 40_000],\n})\ntargets"
+  },
+  {
+   "kind": "code",
+   "language": "sql",
+   "source": "SELECT m.category,\n       round(avg(m.revenue)) AS avg_monthly_revenue,\n       t.monthly_target,\n       round(avg(m.revenue) / t.monthly_target * 100, 1) AS pct_of_target\nFROM monthly m\nJOIN targets t USING (category)\nGROUP BY m.category, t.monthly_target\nORDER BY pct_of_target DESC;"
+  },
+  {
+   "kind": "markdown",
+   "language": "markdown",
+   "source": "## Big results\n\nAbout 300,000 rows: the grid fetches pages from the kernel as you scroll. Click a cell, then use the arrow keys or Ctrl+C."
+  },
+  {
+   "kind": "code",
+   "language": "sql",
+   "source": "SELECT oi.*, p.name AS product, p.category\nFROM order_items oi\nJOIN products p USING (product_id)\nORDER BY oi.order_id, oi.line_no;"
+  }
+ ]
+}

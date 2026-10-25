@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out-test/
+.vscode-test/
+*.vsix
+__pycache__/
+.pytest_cache/
+*.pyc
+samples/*.duckdb
+samples/*.duckdb.wal

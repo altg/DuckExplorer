@@ -1,0 +1,12 @@
+.vscode/**
+.vscode-test/**
+src/**
+test/**
+out-test/**
+samples/**
+python/tests/**
+**/__pycache__/**
+**/*.map
+esbuild.mjs
+tsconfig.json
+node_modules/plotly.js-dist-min/**

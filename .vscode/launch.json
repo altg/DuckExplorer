@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run DuckExplorer",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}/samples"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile"
+    },
+    {
+      "name": "Extension Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--extensionTestsPath=${workspaceFolder}/out-test/suite/index",
+        "${workspaceFolder}/samples"
+      ],
+      "outFiles": ["${workspaceFolder}/out-test/**/*.js", "${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: pretest"
+    }
+  ]
+}
