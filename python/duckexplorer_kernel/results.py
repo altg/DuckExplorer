@@ -5,10 +5,11 @@ from __future__ import annotations
 import secrets
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pyarrow as pa
 
+from . import profile as column_profile
 from .session import Session
 
 MAX_RESULTS = 20
@@ -24,6 +25,9 @@ class StoredResult:
     table: pa.Table  # original column names (may contain duplicates)
     scan: pa.Table  # same data with unique positional names, safe for DuckDB scans
     columns: list[dict]
+    profile: dict | None = None
+    # (column, descending) -> row numbers in that order; only the latest sort is kept.
+    orders: dict[tuple[int, bool], pa.ChunkedArray] = field(default_factory=dict)
 
     @property
     def row_count(self) -> int:
@@ -62,17 +66,50 @@ class ResultStore:
             raise ResultExpired(result_id)
         return stored
 
-    def page(self, result_id: str, offset: int, limit: int) -> list[list[str | None]]:
-        """Rows [offset, offset+limit) rendered by DuckDB's own VARCHAR casts (as the CLI shows them)."""
+    def page(
+        self, result_id: str, offset: int, limit: int, sort: dict | None = None
+    ) -> list[list[str | None]]:
+        """Rows [offset, offset+limit) rendered by DuckDB's own VARCHAR casts (as the CLI shows them).
+
+        `sort` ({"column": index, "descending": bool}) pages through the rows in that order instead.
+        """
         stored = self.get(result_id)
         offset = max(0, int(offset))
         limit = max(0, int(limit))
         if offset >= stored.row_count or limit == 0 or not stored.columns:
             return []
-        page = stored.scan.slice(offset, limit)
         with self._session.side_lock:
+            if sort is None:
+                page = stored.scan.slice(offset, limit)
+            else:
+                order = self._order(stored, int(sort["column"]), bool(sort.get("descending", False)))
+                page = stored.scan.take(order.slice(offset, limit))
             rows = self._session.side.from_arrow(page).project("COLUMNS(*)::VARCHAR").fetchall()
         return [list(row) for row in rows]
+
+    def _order(self, stored: StoredResult, column: int, descending: bool) -> pa.ChunkedArray:
+        """Row numbers sorted by one column, with DuckDB's ordering; NULLs last, ties in original order."""
+        if not 0 <= column < len(stored.columns):
+            raise ValueError(f"No column {column}")
+        key = (column, descending)
+        order = stored.orders.get(key)
+        if order is None:
+            side = self._session.side
+            row_numbers = side.sql(f"SELECT range FROM range({stored.row_count})").to_arrow_table().column(0)
+            numbered = stored.scan.append_column("__row", row_numbers)
+            direction = "DESC" if descending else "ASC"
+            sorted_rows = side.from_arrow(numbered).order(f"c{column} {direction} NULLS LAST, __row").project("__row")
+            order = sorted_rows.to_arrow_table().column(0)
+            stored.orders = {key: order}
+        return order
+
+    def profile(self, result_id: str) -> dict:
+        """Column Explorer statistics, computed on first request and then cached with the result."""
+        stored = self.get(result_id)
+        if stored.profile is None:
+            with self._session.side_lock:
+                stored.profile = column_profile.profile(self._session.side, stored.scan, stored.columns)
+        return stored.profile
 
     def describe(self, stored: StoredResult, page_size: int, **extra) -> dict:
         """The table payload sent to the notebook renderer: metadata plus the first page."""

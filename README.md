@@ -13,7 +13,11 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
 - **DuckDB notebooks** (`*.duckbook`): SQL and Python cells in one shared session.
   - SQL results appear in a virtualized grid that loads pages from the kernel as you scroll
     (hundreds of thousands of rows are fine). Click a cell, then use the arrow keys or Ctrl+C.
-    Drag a header edge to resize a column.
+    Drag a header edge to resize a column. Click a header to sort by that column (ascending,
+    descending, then back to the query's order); DuckDB sorts the whole result in the kernel.
+  - **Column Explorer**: the **Columns** button under a result shows every column's distribution
+    (a histogram for numbers and dates, the most frequent values otherwise), its NULL share,
+    distinct count, and min/max/mean. Click a column to jump to it in the rows.
   - Every SQL result is available in Python as a pandas DataFrame named `df`. Start a SQL cell
     with `-- name: sales` to also keep it as `sales`.
   - SQL cells can query DataFrames created in Python cells by name.
@@ -72,13 +76,16 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 - One kernel process owns the DuckDB connection, so SQL and Python share one session, and
   DuckDB's one-writer file lock is never contended between them.
 - Result pages are rendered with DuckDB's own `VARCHAR` casts, so values look exactly as in the
-  DuckDB CLI. Page and schema requests run on a second cursor, so they don't wait behind a
-  running cell.
+  DuckDB CLI. Page, sort, column-statistics and schema requests run on a second cursor, so they
+  don't wait behind a running cell.
+- A sorted grid pages through row numbers that DuckDB ordered once (NULLs last, ties in query
+  order); the stored result and the `df` DataFrame keep the query's order. Column statistics are
+  computed in a few scans the first time the Columns view opens, then cached with the result.
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view), `src/notebook`
-(serializer + controller), `src/renderer` (grid + Plotly), `python/duckexplorer_kernel`
+(serializer + controller), `src/renderer` (grid, Column Explorer, Plotly), `python/duckexplorer_kernel`
 (kernel), `samples` (demo database builder + notebook).
 
 ## Tests
@@ -90,9 +97,9 @@ npm test              # VS Code integration test (downloads a test build of VS C
 
 ## Roadmap
 
-- **Milestone 2, DuckDB UI parity:** Column Explorer (histograms, null %, distinct counts, top
-  values per column), table summary on click, sort/filter in the grid, schema-aware SQL
-  autocomplete, running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop
-  data files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
+- **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting in the grid. Next:
+  filtering in the grid, table summary on click, schema-aware SQL autocomplete, running `.sql`
+  files, query history, export (CSV/Parquet/Excel), drag-and-drop data files, a "Chart this"
+  builder, Altair/Vega-Lite output, streaming cell output.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

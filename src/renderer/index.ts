@@ -1,10 +1,11 @@
 import type { ActivationFunction } from 'vscode-notebook-renderer';
 import { PLOTLY_MIME, TABLE_MIME, type TableResult } from '../kernel/protocol';
-import { PageClient, ResultGrid } from './grid';
+import { HostClient } from './client';
+import { ResultGrid } from './grid';
 import css from './styles.css';
 
 export const activate: ActivationFunction = (context) => {
-  const pages = new PageClient(context);
+  const host = new HostClient(context);
   const disposers = new Map<string, AbortController>();
 
   return {
@@ -19,7 +20,7 @@ export const activate: ActivationFunction = (context) => {
       element.replaceChildren(style);
 
       if (item.mime === TABLE_MIME) {
-        new ResultGrid(element, item.json() as TableResult, pages, controller.signal);
+        new ResultGrid(element, item.json() as TableResult, host, controller.signal);
       } else if (item.mime === PLOTLY_MIME) {
         const container = document.createElement('div');
         container.className = 'dx-plot';

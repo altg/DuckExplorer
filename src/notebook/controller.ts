@@ -3,14 +3,17 @@ import * as vscode from 'vscode';
 import { KernelClient, KernelRequestError } from '../kernel/kernelProcess';
 import {
   ExecuteResult,
-  FetchPageRequest,
   KernelOutput,
   NOTEBOOK_TYPE,
-  PageResponse,
   PLOTLY_MIME,
   RENDERER_ID,
+  RendererRequest,
+  RendererResponse,
   TABLE_MIME,
 } from '../kernel/protocol';
+
+/** Kernel methods the results renderer may call (all served on the kernel's side thread). */
+const RENDERER_METHODS = new Set<string>(['fetchPage', 'profileResult'] satisfies RendererRequest['type'][]);
 
 interface QueuedCell {
   cell: vscode.NotebookCell;
@@ -19,7 +22,7 @@ interface QueuedCell {
 
 /**
  * Runs SQL and Python cells of `.duckbook` notebooks on the shared kernel, one at a time, and
- * answers the results grid's page requests.
+ * answers the results renderer's requests (pages, sorted pages, column statistics).
  */
 export class DuckbookController implements vscode.Disposable {
   private readonly controller: vscode.NotebookController;
@@ -131,25 +134,21 @@ export class DuckbookController implements vscode.Disposable {
     }
   }
 
-  private async onRendererMessage(editor: vscode.NotebookEditor, message: FetchPageRequest): Promise<void> {
-    if (message?.type !== 'fetchPage') {
+  private async onRendererMessage(editor: vscode.NotebookEditor, message: RendererRequest): Promise<void> {
+    if (!RENDERER_METHODS.has(message?.type)) {
       return;
     }
-    let response: PageResponse;
+    const { type, requestId, ...params } = message;
+    let response: RendererResponse;
     if (!this.kernel.isRunning) {
       // Outputs from a previous session (or a reopened file): don't start a kernel just to say so.
-      response = { type: 'page', requestId: message.requestId, error: 'expired' };
+      response = { type: 'response', requestId, error: 'expired' };
     } else {
       try {
-        const { rows } = await this.kernel.request<{ rows: PageResponse['rows'] }>('fetchPage', {
-          resultId: message.resultId,
-          offset: message.offset,
-          limit: message.limit,
-        });
-        response = { type: 'page', requestId: message.requestId, rows };
+        response = { type: 'response', requestId, result: await this.kernel.request(type, params) };
       } catch (err) {
         const expired = err instanceof KernelRequestError && err.code === 'expired';
-        response = { type: 'page', requestId: message.requestId, error: expired ? 'expired' : (err as Error).message };
+        response = { type: 'response', requestId, error: expired ? 'expired' : (err as Error).message };
       }
     }
     await this.messaging.postMessage(response, editor);

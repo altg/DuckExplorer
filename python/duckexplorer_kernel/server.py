@@ -20,7 +20,7 @@ from .kernel import Kernel
 from .results import ResultExpired
 
 # Served on a side thread (with the side cursor) so they don't wait for a running cell.
-_SIDE_METHODS = {"schema", "fetchPage"}
+_SIDE_METHODS = {"schema", "fetchPage", "profileResult"}
 
 
 class Server:
@@ -48,7 +48,8 @@ class Server:
             "schema": lambda p: k.session.schema(),
             "executeSql": lambda p: k.execute_sql(p["notebook"], p["code"], p.get("cwd")),
             "executePython": lambda p: k.execute_python(p["notebook"], p["code"], p.get("cwd")),
-            "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"]),
+            "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"], p.get("sort")),
+            "profileResult": lambda p: k.profile_result(p["resultId"]),
             "forgetNotebook": lambda p: k.forget_notebook(p["notebook"]),
         }
 

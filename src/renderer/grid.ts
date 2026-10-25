@@ -1,5 +1,7 @@
-import type { RendererContext } from 'vscode-notebook-renderer';
-import type { Cell, FetchPageRequest, PageResponse, TableResult } from '../kernel/protocol';
+import type { Cell, SortSpec, TableResult } from '../kernel/protocol';
+import type { HostClient } from './client';
+import { ColumnExplorer } from './columns';
+import { el, shortType } from './util';
 
 const ROW_HEIGHT = 24;
 const HEADER_HEIGHT = 30;
@@ -8,39 +10,13 @@ const OVERSCAN_ROWS = 8;
 const ROWNUM_MIN_WIDTH = 44;
 // Browsers cap element heights (~33M px in Chromium); taller results scroll proportionally.
 const MAX_SCROLL_HEIGHT = 8_000_000;
-const NUMERIC_TYPE = /^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT|UHUGEINT|FLOAT|DOUBLE|REAL|DECIMAL|NUMERIC)\b/i;
-
-/** Page requests to the extension host over renderer messaging, shared by every grid. */
-export class PageClient {
-  private nextId = 1;
-  private readonly waiting = new Map<number, (response: PageResponse) => void>();
-
-  constructor(private readonly context: RendererContext<unknown>) {
-    context.onDidReceiveMessage?.((message: PageResponse) => {
-      if (message?.type === 'page') {
-        this.waiting.get(message.requestId)?.(message);
-        this.waiting.delete(message.requestId);
-      }
-    });
-  }
-
-  get available(): boolean {
-    return typeof this.context.postMessage === 'function';
-  }
-
-  fetch(resultId: string, offset: number, limit: number): Promise<PageResponse> {
-    const requestId = this.nextId++;
-    const request: FetchPageRequest = { type: 'fetchPage', requestId, resultId, offset, limit };
-    return new Promise((resolve) => {
-      this.waiting.set(requestId, resolve);
-      this.context.postMessage!(request);
-    });
-  }
-}
+// Anchored at both ends: INTEGER[] is a list, not a number.
+const NUMERIC_TYPE = /^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT|UHUGEINT|FLOAT|DOUBLE|REAL|(DECIMAL|NUMERIC)(\(\d+,\s*\d+\))?)$/i;
 
 /**
  * Virtualized results grid: renders only the visible rows and columns and fetches further
- * pages from the kernel as the user scrolls.
+ * pages from the kernel as the user scrolls. Clicking a header sorts by that column (in the
+ * kernel); the footer switches between the rows and the Column Explorer.
  */
 export class ResultGrid {
   private readonly pages = new Map<number, Cell[][]>();
@@ -51,6 +27,12 @@ export class ResultGrid {
   private rownumWidth: number;
   private expired: boolean;
   private selected: { row: number; col: number } | undefined;
+  private sort: SortSpec | undefined;
+  private sortError: string | undefined;
+  /** Bumped whenever the loaded pages are discarded, so late responses for them are dropped. */
+  private generation = 0;
+  private view: 'rows' | 'columns' = 'rows';
+  private suppressClick = false;
   private frame = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private renderPending = false;
@@ -60,11 +42,12 @@ export class ResultGrid {
   private readonly header: HTMLDivElement;
   private readonly body: HTMLDivElement;
   private readonly footer: HTMLDivElement;
+  private readonly explorer: ColumnExplorer | undefined;
 
   constructor(
     element: HTMLElement,
     private readonly result: TableResult,
-    private readonly client: PageClient,
+    private readonly client: HostClient,
     private readonly signal: AbortSignal,
   ) {
     this.pages.set(0, result.rows);
@@ -88,13 +71,21 @@ export class ResultGrid {
 
     if (result.columns.length === 0) {
       this.viewport.remove();
-    } else if (result.rowCount === 0) {
-      this.body.append(el('div', 'dx-empty', 'No rows'));
+    } else {
+      if (result.rowCount === 0) {
+        this.body.append(el('div', 'dx-empty', 'No rows'));
+      }
+      if (client.available) {
+        this.explorer = new ColumnExplorer(result, client, signal, (col) => this.showColumn(col));
+        this.explorer.element.hidden = true;
+        this.viewport.after(this.explorer.element);
+      }
     }
 
     const onScroll = () => this.schedule();
     this.viewport.addEventListener('scroll', onScroll, { passive: true });
     this.viewport.addEventListener('mousedown', (e) => this.onMouseDown(e));
+    this.viewport.addEventListener('click', (e) => this.onClick(e));
     this.viewport.addEventListener('keydown', (e) => this.onKeyDown(e));
     const resizeObserver = new ResizeObserver(() => this.schedule());
     resizeObserver.observe(this.viewport);
@@ -195,12 +186,18 @@ export class ResultGrid {
     const cells: HTMLElement[] = [el('div', 'dx-cell dx-rownum dx-head', '#')];
     cells[0].style.width = `${this.rownumWidth}px`;
     cells.push(spacer(this.offsets[first] - this.rownumWidth));
+    const sortable = this.canSort;
     for (let col = first; col < last; col++) {
       const column = this.result.columns[col];
-      const head = el('div', 'dx-cell dx-head');
+      const head = el('div', sortable ? 'dx-cell dx-head sortable' : 'dx-cell dx-head');
+      head.dataset.col = String(col);
       head.style.width = `${this.widths[col]}px`;
-      head.title = `${column.name}\n${column.type}`;
-      head.append(el('span', 'dx-name', column.name), el('span', 'dx-type', shortType(column.type)));
+      head.title = `${column.name}\n${column.type}${sortable ? '\nClick to sort' : ''}`;
+      head.append(el('span', 'dx-name', column.name));
+      if (this.sort?.column === col) {
+        head.append(el('span', 'dx-sort', this.sort.descending ? '▼' : '▲'));
+      }
+      head.append(el('span', 'dx-type', shortType(column.type)));
       const handle = el('div', 'dx-resize');
       handle.dataset.col = String(col);
       head.append(handle);
@@ -269,11 +266,40 @@ export class ResultGrid {
       `${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`,
     ];
     if (elapsedMs !== undefined) parts.push(formatDuration(elapsedMs));
-    const children: HTMLElement[] = [el('span', '', parts.join(' · '))];
+    const children: HTMLElement[] = [];
+    if (this.explorer) {
+      const tabs = el('div', 'dx-tabs');
+      tabs.setAttribute('role', 'tablist');
+      for (const [view, label] of [
+        ['rows', 'Rows'],
+        ['columns', 'Columns'],
+      ] as const) {
+        const tab = el('button', view === this.view ? 'dx-tab active' : 'dx-tab', label);
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', String(view === this.view));
+        tab.title = view === 'rows' ? 'Show the rows' : 'Column Explorer: distribution, NULLs and distinct values per column';
+        tab.addEventListener('click', () => this.setView(view));
+        tabs.append(tab);
+      }
+      children.push(tabs);
+    }
+    children.push(el('span', '', parts.join(' · ')));
+    if (this.sort) {
+      const column = this.result.columns[this.sort.column];
+      const sorted = el('span', 'dx-sorted', `Sorted by ${column.name} ${this.sort.descending ? '▼' : '▲'}`);
+      const clear = el('button', 'dx-link', 'Clear');
+      clear.title = 'Back to the query order';
+      clear.addEventListener('click', () => this.setSort(undefined));
+      sorted.append(clear);
+      children.push(sorted);
+    }
     if (boundTo?.length) {
       const bound = el('span', 'dx-bound', `Python: ${boundTo.join(', ')}`);
       bound.title = 'Available as pandas DataFrames in Python cells of this notebook';
       children.push(bound);
+    }
+    if (this.sortError) {
+      children.push(el('span', 'dx-banner', `Could not sort: ${this.sortError}`));
     }
     if (this.expired) {
       const shown = this.rowCount;
@@ -301,15 +327,25 @@ export class ResultGrid {
   }
 
   private async loadPage(page: number): Promise<void> {
+    const generation = this.generation;
     this.inflight.add(page);
     const size = this.result.pageSize;
-    const response = await this.client.fetch(this.result.id, page * size, size);
+    const response = await this.client.fetchPage(this.result.id, page * size, size, this.sort);
+    if (this.signal.aborted || generation !== this.generation) return;
     this.inflight.delete(page);
-    if (this.signal.aborted) return;
-    if (response.rows) {
-      this.pages.set(page, response.rows);
+    if (response.result) {
+      this.pages.set(page, response.result.rows);
+    } else if (this.sort && response.error !== 'expired') {
+      this.sortError = response.error;
+      this.setSort(undefined);
+      return;
     } else if (!this.expired) {
       this.expired = true;
+      if (this.sort) {
+        // Only the first page in query order is still available.
+        this.sort = undefined;
+        this.resetPages();
+      }
       this.layout();
       this.renderFooter();
       return;
@@ -317,7 +353,71 @@ export class ResultGrid {
     this.schedule();
   }
 
+  private resetPages(): void {
+    this.generation++;
+    this.pages.clear();
+    this.inflight.clear();
+    if (!this.sort) this.pages.set(0, this.result.rows);
+  }
+
+  // -- sorting and views --------------------------------------------------------
+
+  private get canSort(): boolean {
+    return this.client.available && !this.expired && this.result.rowCount > 1;
+  }
+
+  /** Cycles a column through ascending, descending and the query's own order. */
+  private toggleSort(col: number): void {
+    const current = this.sort?.column === col ? this.sort : undefined;
+    this.sortError = undefined;
+    this.setSort(!current ? { column: col, descending: false } : !current.descending ? { column: col, descending: true } : undefined);
+  }
+
+  private setSort(sort: SortSpec | undefined): void {
+    this.sort = sort;
+    this.resetPages();
+    this.renderRows();
+    this.renderFooter();
+  }
+
+  private setView(view: 'rows' | 'columns'): void {
+    if (!this.explorer || view === this.view) return;
+    this.view = view;
+    this.viewport.hidden = view !== 'rows';
+    this.explorer.element.hidden = view !== 'columns';
+    if (view === 'columns') {
+      this.explorer.show();
+      this.explorer.element.focus({ preventScroll: true });
+    } else {
+      this.viewport.focus({ preventScroll: true });
+      this.schedule();
+    }
+    this.renderFooter();
+  }
+
+  /** From the Column Explorer: back to the rows, with that column selected and in view. */
+  private showColumn(col: number): void {
+    this.setView('rows');
+    const row = this.selected?.row ?? this.firstVisibleRow();
+    this.selected = { row, col };
+    this.scrollIntoView(row, col);
+    this.renderRows();
+  }
+
+  private firstVisibleRow(): number {
+    const { ratio } = this.scrollModel();
+    return Math.min(Math.max(0, this.rowCount - 1), Math.ceil((this.viewport.scrollTop * ratio) / ROW_HEIGHT));
+  }
+
   // -- interaction --------------------------------------------------------------
+
+  private onClick(event: MouseEvent): void {
+    if (this.suppressClick) return; // the end of a column resize
+    const head = (event.target as HTMLElement).closest<HTMLElement>('.dx-head[data-col]');
+    if (head && this.canSort) {
+      this.toggleSort(Number(head.dataset.col));
+    }
+  }
 
   private onMouseDown(event: MouseEvent): void {
     const target = event.target as HTMLElement;
@@ -345,6 +445,9 @@ export class ResultGrid {
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      // The click that follows this mouseup must not sort the column.
+      this.suppressClick = true;
+      setTimeout(() => (this.suppressClick = false));
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
@@ -393,13 +496,6 @@ export class ResultGrid {
 
 // -- helpers --------------------------------------------------------------------
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
 function spacer(width: number): HTMLElement {
   const node = el('div', 'dx-spacer');
   node.style.width = `${Math.max(0, width)}px`;
@@ -413,16 +509,6 @@ function estimateWidth(name: string, type: string, rows: Cell[][], col: number):
     chars = Math.max(chars, value === null ? 4 : Math.min(value.length, 60));
   }
   return Math.round(Math.min(360, Math.max(64, chars * 7.4 + 20)));
-}
-
-function shortType(type: string): string {
-  const t = type.toUpperCase();
-  if (t.startsWith('STRUCT')) return 'STRUCT';
-  if (t.startsWith('MAP')) return 'MAP';
-  if (t.startsWith('UNION')) return 'UNION';
-  if (t.endsWith(']')) return 'LIST';
-  if (t.startsWith('TIMESTAMP WITH TIME ZONE')) return 'TIMESTAMPTZ';
-  return t.replace(/\(.*\)$/, '');
 }
 
 function formatDuration(ms: number): string {

@@ -99,6 +99,36 @@ suite('DuckExplorer notebook', () => {
     assert.match(error.message, /table_that_does_not_exist/);
   });
 
+  test('the kernel serves sorted pages and column statistics for a result', async () => {
+    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const notebook = await vscode.workspace.openNotebookDocument(
+      'duckexplorer-notebook',
+      new vscode.NotebookData([
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT range AS n, range % 3 AS k FROM range(1000)', 'sql'),
+      ]),
+    );
+    await vscode.window.showNotebookDocument(notebook);
+    const cell = notebook.cellAt(0);
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+    await waitFor(() => cell.executionSummary?.success !== undefined, 60_000, 'the cell to finish');
+    const table = JSON.parse(Buffer.from(cell.outputs[0].items[0].data).toString('utf8'));
+
+    const { rows } = await api.kernel.request('fetchPage', {
+      resultId: table.id,
+      offset: 0,
+      limit: 3,
+      sort: { column: 0, descending: true },
+    });
+    assert.deepStrictEqual(rows, [['999', '0'], ['998', '2'], ['997', '1']]);
+
+    const profile = await api.kernel.request('profileResult', { resultId: table.id });
+    assert.strictEqual(profile.rowCount, 1000);
+    assert.deepStrictEqual(
+      profile.columns[1].histogram.map((bar: any) => [bar.start, bar.count]),
+      [['0', 334], ['1', 333], ['2', 333]],
+    );
+  });
+
   test('the schema tree lists attached databases down to columns', async () => {
     const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(SAMPLES, 'demo.duckdb'), readOnly: true });

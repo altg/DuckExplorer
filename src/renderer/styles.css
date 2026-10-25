@@ -136,6 +136,20 @@
   color: var(--vscode-descriptionForeground);
 }
 
+.dx-head.sortable {
+  cursor: pointer;
+}
+
+.dx-head.sortable:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.dx-head .dx-sort {
+  flex: none;
+  font-size: 9px;
+  color: var(--vscode-focusBorder);
+}
+
 .dx-resize {
   position: absolute;
   top: 0;
@@ -158,13 +172,259 @@
   color: var(--vscode-descriptionForeground);
 }
 
+.dx-result [hidden] {
+  display: none !important;
+}
+
 .dx-footer {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px 14px;
   padding: 4px 2px 0;
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
+}
+
+.dx-tabs {
+  display: flex;
+  border: 1px solid var(--dx-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.dx-tab {
+  padding: 1px 10px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dx-tab + .dx-tab {
+  border-left: 1px solid var(--dx-border);
+}
+
+.dx-tab:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-foreground);
+}
+
+.dx-tab.active {
+  background: var(--vscode-button-secondaryBackground, var(--vscode-list-inactiveSelectionBackground));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+
+.dx-tab:focus-visible,
+.dx-link:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.dx-sorted {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.dx-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dx-link:hover {
+  text-decoration: underline;
+}
+
+/* -- Column Explorer ------------------------------------------------------------ */
+
+.dx-columns {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--dx-border);
+  border-radius: 4px;
+  outline: none;
+  background: var(--dx-surface);
+  container-type: inline-size;
+}
+
+.dx-columns:focus-visible {
+  border-color: var(--vscode-focusBorder);
+}
+
+.dx-columns-status {
+  padding: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-columns-status.dx-error {
+  color: var(--vscode-errorForeground);
+}
+
+.dx-col {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) 240px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 18px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--dx-grid-line);
+  cursor: pointer;
+}
+
+.dx-col:last-child {
+  border-bottom: none;
+}
+
+.dx-col:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+@container (max-width: 620px) {
+  .dx-col {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+
+  .dx-col-stats {
+    grid-column: 1 / -1;
+  }
+}
+
+.dx-col-head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dx-col-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.dx-col-type {
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-col-note {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-hist svg {
+  display: block;
+  overflow: visible;
+}
+
+.dx-hist .dx-hit {
+  fill: transparent;
+}
+
+.dx-hist .dx-bar {
+  fill: var(--vscode-charts-blue, #3794ff);
+  opacity: 0.85;
+}
+
+.dx-hist g:hover .dx-bar {
+  opacity: 1;
+  fill: var(--vscode-charts-orange, #d18616);
+}
+
+.dx-hist g:hover .dx-hit {
+  fill: var(--dx-grid-line);
+}
+
+.dx-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+.dx-top {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 240px;
+}
+
+.dx-top-row {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  height: 16px;
+  padding: 0 4px;
+  line-height: 16px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+
+.dx-top-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 2px;
+  background: var(--vscode-charts-blue, #3794ff);
+  opacity: 0.28;
+}
+
+.dx-top-value {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dx-top-count {
+  position: relative;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-top-more {
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-col-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.dx-stat {
+  display: inline-flex;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dx-stat-label {
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-stat-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-variant-numeric: tabular-nums;
 }
 
 .dx-bound {

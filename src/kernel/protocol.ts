@@ -86,20 +86,60 @@ export interface SchemaTree {
   databases: DatabaseNode[];
 }
 
-// Renderer <-> extension messages (notebook renderer messaging).
-
-export interface FetchPageRequest {
-  type: 'fetchPage';
-  requestId: number;
-  resultId: string;
-  offset: number;
-  limit: number;
+export interface SortSpec {
+  /** Column index in the result. */
+  column: number;
+  descending: boolean;
 }
 
-export interface PageResponse {
-  type: 'page';
+export interface HistogramBar {
+  start: string;
+  /** Inclusive for integer and DATE columns; equal to start when a bar holds a single value. */
+  end: string;
+  count: number;
+}
+
+/** Column Explorer statistics for one column of a result (python/duckexplorer_kernel/profile.py). */
+export interface ColumnProfile {
+  name: string;
+  type: string;
+  kind: 'numeric' | 'temporal' | 'boolean' | 'text' | 'other';
+  nulls: number;
+  distinct: number;
+  distinctApprox?: boolean;
+  min?: string | null;
+  max?: string | null;
+  mean?: string;
+  /** Numeric and temporal columns. */
+  histogram?: HistogramBar[];
+  /** Other columns: the most frequent non-NULL values. */
+  top?: { value: string; count: number }[];
+  otherCount?: number;
+  /** Every non-NULL value is distinct, so top values are omitted. */
+  unique?: boolean;
+}
+
+export interface ResultProfile {
+  rowCount: number;
+  columns: ColumnProfile[];
+}
+
+// Renderer <-> extension messages (notebook renderer messaging). Each request type is also the
+// kernel method that answers it; the remaining fields are its params.
+
+export type RendererRequest =
+  | { type: 'fetchPage'; requestId: number; resultId: string; offset: number; limit: number; sort?: SortSpec }
+  | { type: 'profileResult'; requestId: number; resultId: string };
+
+export interface RendererResults {
+  fetchPage: { rows: Cell[][] };
+  profileResult: ResultProfile;
+}
+
+export interface RendererResponse {
+  type: 'response';
   requestId: number;
-  rows?: Cell[][];
+  result?: unknown;
   /** 'expired' when the kernel no longer holds the result (restarted, evicted, reopened file). */
   error?: 'expired' | string;
 }
