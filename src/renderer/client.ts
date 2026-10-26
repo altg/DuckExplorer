@@ -1,5 +1,5 @@
 import type { RendererContext } from 'vscode-notebook-renderer';
-import type { RendererRequest, RendererResponse, RendererResults, SortSpec } from '../kernel/protocol';
+import type { FilterSpec, RendererRequest, RendererResponse, RendererResults, SortSpec } from '../kernel/protocol';
 
 type Reply<T> = { result: T; error?: undefined } | { result?: undefined; error: 'expired' | string };
 
@@ -21,12 +21,18 @@ export class HostClient {
     return typeof this.context.postMessage === 'function';
   }
 
-  fetchPage(resultId: string, offset: number, limit: number, sort?: SortSpec): Promise<Reply<RendererResults['fetchPage']>> {
-    return this.request({ type: 'fetchPage', requestId: 0, resultId, offset, limit, sort });
+  fetchPage(
+    resultId: string,
+    offset: number,
+    limit: number,
+    sort?: SortSpec,
+    filter?: FilterSpec,
+  ): Promise<Reply<RendererResults['fetchPage']>> {
+    return this.request({ type: 'fetchPage', requestId: 0, resultId, offset, limit, sort, filter });
   }
 
-  profile(resultId: string): Promise<Reply<RendererResults['profileResult']>> {
-    return this.request({ type: 'profileResult', requestId: 0, resultId });
+  profile(resultId: string, filter?: FilterSpec): Promise<Reply<RendererResults['profileResult']>> {
+    return this.request({ type: 'profileResult', requestId: 0, resultId, filter });
   }
 
   private request<T>(request: RendererRequest): Promise<Reply<T>> {

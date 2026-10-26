@@ -15,9 +15,16 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
     (hundreds of thousands of rows are fine). Click a cell, then use the arrow keys or Ctrl+C.
     Drag a header edge to resize a column. Click a header to sort by that column (ascending,
     descending, then back to the query's order); DuckDB sorts the whole result in the kernel.
+  - **Filtering**: right-click a cell to keep or exclude its value (or, for numbers and dates,
+    keep values ≥ or ≤ it); right-click a header for NULL filters and sorting. The **Filter**
+    button under a result opens a `WHERE` box for any SQL condition on the result's columns
+    (`amount > 100 AND status = 'open'`, Enter to apply). Filters show as removable chips and
+    combine with each other and with the sort; the footer counts the matching rows.
   - **Column Explorer**: the **Columns** button under a result shows every column's distribution
     (a histogram for numbers and dates, the most frequent values otherwise), its NULL share,
-    distinct count, and min/max/mean. Click a column to jump to it in the rows.
+    distinct count, and min/max/mean, for the rows the filter keeps. Click a histogram bar or a
+    value to filter to it (bars re-bin, so you can drill in), or elsewhere on a column's line to
+    jump to that column in the rows.
   - Every SQL result is available in Python as a pandas DataFrame named `df`. Start a SQL cell
     with `-- name: sales` to also keep it as `sales`.
   - SQL cells can query DataFrames created in Python cells by name.
@@ -78,14 +85,17 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 - Result pages are rendered with DuckDB's own `VARCHAR` casts, so values look exactly as in the
   DuckDB CLI. Page, sort, column-statistics and schema requests run on a second cursor, so they
   don't wait behind a running cell.
-- A sorted grid pages through row numbers that DuckDB ordered once (NULLs last, ties in query
-  order); the stored result and the `df` DataFrame keep the query's order. Column statistics are
-  computed in a few scans the first time the Columns view opens, then cached with the result.
+- A sorted or filtered grid pages through row numbers that DuckDB selected and ordered once
+  (NULLs last, ties in query order); the stored result and the `df` DataFrame keep every row in
+  the query's order. Value filters compare the text the grid shows, so they match exactly what
+  you clicked; `≥`/`≤` compare typed values, and a histogram-bar filter reuses the expression
+  that counted the bar. Column statistics are computed in a few scans when the Columns view
+  opens, then cached with the result for that filter.
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view), `src/notebook`
-(serializer + controller), `src/renderer` (grid, Column Explorer, Plotly), `python/duckexplorer_kernel`
+(serializer + controller), `src/renderer` (grid, filter bar and menus, Column Explorer, Plotly), `python/duckexplorer_kernel`
 (kernel), `samples` (demo database builder + notebook).
 
 ## Tests
@@ -97,9 +107,9 @@ npm test              # VS Code integration test (downloads a test build of VS C
 
 ## Roadmap
 
-- **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting in the grid. Next:
-  filtering in the grid, table summary on click, schema-aware SQL autocomplete, running `.sql`
-  files, query history, export (CSV/Parquet/Excel), drag-and-drop data files, a "Chart this"
-  builder, Altair/Vega-Lite output, streaming cell output.
+- **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
+  grid. Next: table summary on click, schema-aware SQL autocomplete, running `.sql` files, query
+  history, export (CSV/Parquet/Excel), drag-and-drop data files, a "Chart this" builder,
+  Altair/Vega-Lite output, streaming cell output.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

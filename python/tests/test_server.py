@@ -51,6 +51,13 @@ def test_protocol_round_trip(tmp_path, sample_db):
         expired = request(6, "fetchPage", {"resultId": "r999", "offset": 0, "limit": 10})
         assert expired["error"]["code"] == "expired"
 
+        filtered = {"resultId": table["id"], "offset": 0, "limit": 10, "filter": {"conditions": [], "where": "n > 5"}}
+        assert request(61, "fetchPage", filtered)["result"] == {"rows": [["1000"]], "rowCount": 1}
+        filtered["filter"]["where"] = "nope > 5"
+        invalid = request(62, "fetchPage", filtered)["error"]
+        assert invalid["code"] == "invalid" and "traceback" not in invalid
+        assert invalid["message"].startswith("Binder Error")
+
         unknown = request(7, "nope")
         assert unknown["error"]["code"] == "unknown-method"
 

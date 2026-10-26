@@ -197,11 +197,14 @@ class Kernel:
                     capture.stream("stderr", f"Could not render figure: {exc}\n")
         return {"outputs": capture.outputs, "error": error}
 
-    def fetch_page(self, result_id: str, offset: int, limit: int, sort: dict | None = None) -> dict:
-        return {"rows": self.results.page(result_id, offset, limit, sort)}
+    def fetch_page(
+        self, result_id: str, offset: int, limit: int, sort: dict | None = None, filter_spec: dict | None = None
+    ) -> dict:
+        rows, count = self.results.page(result_id, offset, limit, sort, filter_spec)
+        return {"rows": rows, "rowCount": count}
 
-    def profile_result(self, result_id: str) -> dict:
-        return self.results.profile(result_id)
+    def profile_result(self, result_id: str, filter_spec: dict | None = None) -> dict:
+        return self.results.profile(result_id, filter_spec)
 
     # -- helpers -------------------------------------------------------------------
 

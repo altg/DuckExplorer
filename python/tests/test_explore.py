@@ -106,6 +106,27 @@ def test_profile_of_empty_result_and_duplicate_names(kernel):
     assert [c["kind"] for c in profile["columns"]] == ["numeric", "text"]
 
 
+def test_wide_numbers_and_time_zones(kernel):
+    kernel.session.side.execute("SET TimeZone = 'America/New_York'")
+    _, cols = columns_by_name(
+        kernel,
+        "SELECT range::HUGEINT * 170141183460469231731687303715884105 AS huge, "
+        "TIMESTAMPTZ '2024-03-10 00:00:00+00' + to_hours(range) AS t FROM range(50)",
+    )
+    # avg() of these HUGEINTs overflows an exact sum; the mean is computed as DOUBLE.
+    assert cols["huge"]["mean"] == "4.16846e+36"
+    # Bars of a TIMESTAMPTZ column are labelled in the session time zone, like min and max.
+    t = cols["t"]
+    assert t["histogram"][0]["start"] == t["min"] == "2024-03-09 19:00:00-05"
+    assert t["histogram"][-1]["end"] == t["max"] == "2024-03-11 21:00:00-04"
+
+
+def test_few_distinct_values_are_listed(kernel):
+    _, cols = columns_by_name(kernel, "SELECT 'only' AS one, range = 0 AS b FROM range(1)")
+    assert cols["one"]["top"] == [{"value": "only", "count": 1}]
+    assert "unique" not in cols["one"]
+
+
 def test_profile_is_cached(kernel):
     result_id = run(kernel, "SELECT range AS n FROM range(10)")
     assert kernel.profile_result(result_id) is kernel.profile_result(result_id)

@@ -92,10 +92,33 @@ export interface SortSpec {
   descending: boolean;
 }
 
+/**
+ * A condition on one column of a result (python/duckexplorer_kernel/filters.py). Values are compared
+ * as the grid shows them: `eq`/`ne` match the displayed text, `ge`/`le` compare typed values.
+ */
+export type FilterCondition =
+  | { column: number; op: 'eq' | 'ne' | 'ge' | 'le'; value: string }
+  | { column: number; op: 'null' | 'notNull' }
+  /** The rows of one Column Explorer histogram bar; `label` is its range, for display. */
+  | { column: number; op: 'bin'; bins: HistogramBins; index: number; label: string };
+
+/** The rows of a result to show: every condition holds, and so does `where` (SQL over the column names). */
+export interface FilterSpec {
+  conditions: FilterCondition[];
+  where?: string;
+}
+
 export interface HistogramBar {
   start: string;
   /** Inclusive for integer and DATE columns; equal to start when a bar holds a single value. */
   end: string;
+  count: number;
+}
+
+/** How a histogram's bars were cut, so a `bin` filter selects exactly the rows a bar counts. */
+export interface HistogramBins {
+  low: number;
+  width: number;
   count: number;
 }
 
@@ -112,6 +135,7 @@ export interface ColumnProfile {
   mean?: string;
   /** Numeric and temporal columns. */
   histogram?: HistogramBar[];
+  bins?: HistogramBins;
   /** Other columns: the most frequent non-NULL values. */
   top?: { value: string; count: number }[];
   otherCount?: number;
@@ -128,11 +152,20 @@ export interface ResultProfile {
 // kernel method that answers it; the remaining fields are its params.
 
 export type RendererRequest =
-  | { type: 'fetchPage'; requestId: number; resultId: string; offset: number; limit: number; sort?: SortSpec }
-  | { type: 'profileResult'; requestId: number; resultId: string };
+  | {
+      type: 'fetchPage';
+      requestId: number;
+      resultId: string;
+      offset: number;
+      limit: number;
+      sort?: SortSpec;
+      filter?: FilterSpec;
+    }
+  | { type: 'profileResult'; requestId: number; resultId: string; filter?: FilterSpec };
 
 export interface RendererResults {
-  fetchPage: { rows: Cell[][] };
+  /** `rowCount` is the number of rows in the sorted/filtered view. */
+  fetchPage: { rows: Cell[][]; rowCount: number };
   profileResult: ResultProfile;
 }
 
@@ -140,6 +173,9 @@ export interface RendererResponse {
   type: 'response';
   requestId: number;
   result?: unknown;
-  /** 'expired' when the kernel no longer holds the result (restarted, evicted, reopened file). */
+  /**
+   * 'expired' when the kernel no longer holds the result (restarted, evicted, reopened file);
+   * otherwise a message, such as DuckDB's error for an invalid filter.
+   */
   error?: 'expired' | string;
 }

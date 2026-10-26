@@ -66,7 +66,8 @@ def profile(side: duckdb.DuckDBPyConnection, scan: pa.Table, columns: list[dict]
                 f"max({c})::VARCHAR",
                 f"min({point})",
                 f"max({point})",
-                f"avg({c})::VARCHAR" if kind == "numeric" else "NULL",
+                # Averaged as DOUBLE: avg() of a HUGEINT or wide DECIMAL can overflow its exact sum.
+                f"avg({c}::DOUBLE)::VARCHAR" if kind == "numeric" else "NULL",
             ]
     summary = list(rel.aggregate(", ".join(aggregates)).fetchone())
 
@@ -88,30 +89,25 @@ def profile(side: duckdb.DuckDBPyConnection, scan: pa.Table, columns: list[dict]
 
     # One scan for every histogram.
     if ranges:
-        expressions = []
-        for i, bins in ranges.items():
-            point = _point(i, kinds[i], columns[i]["type"])
-            if bins.count == 1:
-                bucket = "0"
-            else:
-                bucket = f"least(greatest(floor(({point} - ({bins.low!r})) / {bins.width!r}), 0), {bins.count - 1})"
-            # greatest() and least() skip NULLs, so NULLs (and NaN) are excluded explicitly.
-            expressions.append(f"histogram(CASE WHEN {point} IS NOT NULL THEN {bucket}::INTEGER END)")
+        expressions = [
+            f"histogram({bucket_expression(i, kinds[i], columns[i]['type'], bins.low, bins.width, bins.count)})"
+            for i, bins in ranges.items()
+        ]
         counts = rel.aggregate(", ".join(expressions)).fetchone()
         for (i, bins), histogram in zip(ranges.items(), counts):
             histogram = histogram or {}
-            date_only = columns[i]["type"].upper() == "DATE"
-            bars = []
-            for b in range(bins.count):
-                start, end = bins.bounds(b)
-                bars.append(
-                    {
-                        "start": _label(start, kinds[i], date_only),
-                        "end": _label(end, kinds[i], date_only),
-                        "count": int(histogram.get(b, 0)),
-                    }
-                )
-            profiles[i]["histogram"] = bars
+            type_name = columns[i]["type"].upper()
+            bounds = [value for b in range(bins.count) for value in bins.bounds(b)]
+            if type_name == "TIMESTAMP WITH TIME ZONE":
+                labels = _session_time_labels(side, bounds)
+            else:
+                labels = [_label(value, kinds[i], type_name == "DATE") for value in bounds]
+            profiles[i]["histogram"] = [
+                {"start": labels[2 * b], "end": labels[2 * b + 1], "count": int(histogram.get(b, 0))}
+                for b in range(bins.count)
+            ]
+            # Lets the grid filter to one bar with the same bucket expression (see filters.py).
+            profiles[i]["bins"] = {"low": bins.low, "width": bins.width, "count": bins.count}
 
     # Top values for everything that isn't binned, one GROUP BY per column.
     for i, kind in enumerate(kinds):
@@ -119,7 +115,7 @@ def profile(side: duckdb.DuckDBPyConnection, scan: pa.Table, columns: list[dict]
         non_null = rows - p["nulls"]
         if kind in ("numeric", "temporal") or non_null == 0:
             continue
-        if p["distinct"] == non_null and not approx:
+        if p["distinct"] == non_null and non_null > TOP_VALUES and not approx:
             p["unique"] = True  # e.g. an id column: every count would be 1
             continue
         c = f"c{i}"
@@ -143,6 +139,17 @@ def _point(i: int, kind: str, type_name: str) -> str:
     return f"{c}::DOUBLE"
 
 
+def bucket_expression(i: int, kind: str, type_name: str, low: float, width: float, count: int) -> str:
+    """The histogram bar (0 … count-1) holding column i's value; NULL for NULL, NaN and ±inf."""
+    point = _point(i, kind, type_name)
+    if count == 1:
+        bucket = "0"
+    else:
+        bucket = f"least(greatest(floor(({point} - ({low!r})) / {width!r}), 0), {count - 1})"
+    # greatest() and least() skip NULLs, so NULLs (and NaN) are excluded explicitly.
+    return f"(CASE WHEN {point} IS NOT NULL THEN {bucket}::INTEGER END)"
+
+
 @dataclass
 class _Bins:
     low: float
@@ -163,7 +170,8 @@ class _Bins:
 def _bins_for(low: float, high: float, type_name: str, kind: str) -> _Bins:
     t = type_name.upper()
     unit = 1.0 if _INTEGER.match(t) else _DAY_US if t == "DATE" else 0.0
-    if high <= low:
+    # One bar when the range is empty or too wide for a finite DOUBLE (e.g. -1e308 … 1e308).
+    if high <= low or not math.isfinite(high - low):
         return _Bins(low, high, 0.0, 1, unit)
     if unit:
         width = math.ceil((high - low + unit) / unit / HISTOGRAM_BINS) * unit
@@ -186,6 +194,15 @@ def _label(value: float, kind: str, date_only: bool) -> str:
     if value == int(value) and abs(value) < 1e15:
         return str(int(value))
     return f"{value:.6g}"
+
+
+def _session_time_labels(side: duckdb.DuckDBPyConnection, values: list[float]) -> list[str]:
+    """Epoch microseconds as TIMESTAMPTZ text in the session's time zone, as min and max show them."""
+    labels = side.execute(
+        "SELECT list_transform($v, x -> (make_timestamp(round(x)::BIGINT) AT TIME ZONE 'UTC')::VARCHAR)",
+        {"v": values},
+    ).fetchone()[0]
+    return list(labels)
 
 
 def _format_mean(text: str) -> str:

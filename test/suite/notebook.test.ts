@@ -99,7 +99,7 @@ suite('DuckExplorer notebook', () => {
     assert.match(error.message, /table_that_does_not_exist/);
   });
 
-  test('the kernel serves sorted pages and column statistics for a result', async () => {
+  test('the kernel serves sorted and filtered pages and column statistics for a result', async () => {
     const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
@@ -120,6 +120,16 @@ suite('DuckExplorer notebook', () => {
       sort: { column: 0, descending: true },
     });
     assert.deepStrictEqual(rows, [['999', '0'], ['998', '2'], ['997', '1']]);
+
+    const filter = { conditions: [{ column: 1, op: 'eq', value: '2' }], where: 'n < 100' };
+    const filtered = await api.kernel.request('fetchPage', { resultId: table.id, offset: 0, limit: 3, filter });
+    assert.deepStrictEqual(filtered, { rows: [['2', '2'], ['5', '2'], ['8', '2']], rowCount: 33 });
+    const filteredProfile = await api.kernel.request('profileResult', { resultId: table.id, filter });
+    assert.strictEqual(filteredProfile.rowCount, 33);
+    await assert.rejects(
+      api.kernel.request('fetchPage', { resultId: table.id, offset: 0, limit: 3, filter: { conditions: [], where: 'm < 1' } }),
+      (err: any) => err.code === 'invalid' && /Binder Error/.test(err.message),
+    );
 
     const profile = await api.kernel.request('profileResult', { resultId: table.id });
     assert.strictEqual(profile.rowCount, 1000);

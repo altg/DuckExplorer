@@ -16,6 +16,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
+from .filters import InvalidFilter
 from .kernel import Kernel
 from .results import ResultExpired
 
@@ -48,8 +49,8 @@ class Server:
             "schema": lambda p: k.session.schema(),
             "executeSql": lambda p: k.execute_sql(p["notebook"], p["code"], p.get("cwd")),
             "executePython": lambda p: k.execute_python(p["notebook"], p["code"], p.get("cwd")),
-            "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"], p.get("sort")),
-            "profileResult": lambda p: k.profile_result(p["resultId"]),
+            "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"], p.get("sort"), p.get("filter")),
+            "profileResult": lambda p: k.profile_result(p["resultId"], p.get("filter")),
             "forgetNotebook": lambda p: k.forget_notebook(p["notebook"]),
         }
 
@@ -96,6 +97,9 @@ class Server:
             self._reply(msg_id, handler(message.get("params") or {}))
         except ResultExpired:
             self._reply(msg_id, error={"code": "expired", "message": "Result is no longer available; re-run the cell."})
+        except InvalidFilter as exc:
+            # The user's own input (e.g. the grid's WHERE text): no traceback for the log.
+            self._reply(msg_id, error={"code": "invalid", "message": str(exc)})
         except BaseException as exc:  # never let one request take the kernel down
             self._reply(
                 msg_id,

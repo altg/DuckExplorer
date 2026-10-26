@@ -101,7 +101,10 @@ export class KernelClient implements vscode.Disposable {
   }
 
   async restart(): Promise<KernelInfo> {
+    const starting = this.starting;
     this.stop();
+    // A start that was in progress fails once its process is stopped; start afresh after it.
+    await starting?.catch(() => undefined);
     return this.ensureStarted();
   }
 
@@ -110,7 +113,6 @@ export class KernelClient implements vscode.Disposable {
     this.proc = undefined;
     this.info = undefined;
     if (proc) {
-      proc.removeAllListeners('exit');
       try {
         proc.stdin?.end(JSON.stringify({ id: 0, method: 'shutdown' }) + '\n');
       } catch {
@@ -204,6 +206,9 @@ export class KernelClient implements vscode.Disposable {
 
     try {
       const info = await ready;
+      if (this.proc !== proc) {
+        throw new Error('Kernel was restarted');
+      }
       this.info = info;
       this.log.info(
         `Kernel ready: Python ${info.python}, duckdb ${info.duckdb}, pyarrow ${info.pyarrow}, ` +
@@ -214,10 +219,11 @@ export class KernelClient implements vscode.Disposable {
       this.startedEmitter.fire(info);
       return info;
     } catch (err) {
-      if (this.proc === proc) {
-        this.proc = undefined;
-        proc.kill();
+      if (this.proc !== proc) {
+        throw err; // stopped or restarted while starting: nothing to report
       }
+      this.proc = undefined;
+      proc.kill();
       this.updateStatus();
       this.log.error(`Kernel failed to start: ${String(err)}`);
       void reportStartupFailure(python, stderrTail || String(err));
