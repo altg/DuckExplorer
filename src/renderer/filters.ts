@@ -63,40 +63,57 @@ function shorten(value: string): string {
   return value.length > MAX_VALUE_CHARS ? `${value.slice(0, MAX_VALUE_CHARS - 1)}…` : value;
 }
 
+export interface FilterBarHandlers {
+  /** Apply this filter (undefined: none). */
+  change(filter: FilterSpec | undefined): void;
+  /** The bar was shown or hidden by itself (Escape, a message). */
+  toggled(): void;
+  /** "Edit as SQL": fold the chips into the WHERE box. */
+  editAsSql(): void;
+  /** "New cell": rerun the cell's query filtered, in a new cell. Absent for results of Python cells. */
+  newCell?(): void;
+}
+
 /**
  * The filter above a result: a chip per condition (added from the cell and header menus or the
  * Column Explorer) and a WHERE box for any SQL condition on the result's columns. Changes go to
- * `onChange`; the grid applies them in the kernel and calls update() once the new rows are in.
+ * `handlers.change`; the grid applies them in the kernel and calls update() once the new rows are in.
  */
 export class FilterBar {
   readonly element = el('div', 'dx-filterbar');
   private readonly chips = el('div', 'dx-chips');
   private readonly where = el('label', 'dx-where');
-  private readonly input = el('input', 'dx-where-input');
+  /** Grows with its text, so a long condition (e.g. from "Edit as SQL") stays readable. */
+  private readonly input = el('textarea', 'dx-where-input');
+  private readonly editAsSql = el('button', 'dx-link', 'Edit as SQL');
+  private readonly newCell = el('button', 'dx-link', 'New cell');
   private readonly clear = el('button', 'dx-link', 'Clear all');
-  private readonly error = el('div', 'dx-filter-error');
+  private readonly message = el('div', 'dx-filter-error');
   private filter: FilterSpec | undefined;
   private open = false;
 
   constructor(
     private readonly columns: ColumnInfo[],
-    private readonly onChange: (filter: FilterSpec | undefined) => void,
-    private readonly onToggle: () => void,
+    private readonly handlers: FilterBarHandlers,
   ) {
-    this.input.type = 'text';
+    this.input.rows = 1;
     this.input.spellcheck = false;
-    this.input.placeholder = 'SQL condition on the columns, e.g. amount > 100 — Enter to apply';
+    this.input.placeholder = 'SQL condition on the columns, e.g. amount > 100 — Enter to apply, Shift+Enter for a new line';
     this.input.setAttribute('aria-label', 'Filter the rows with a SQL condition');
     this.input.addEventListener('keydown', (event) => this.onKeyDown(event));
     this.input.addEventListener('input', () => {
       this.open = true; // a draft keeps the bar up even when the last filter is removed
-      this.markDirty();
+      this.syncInput();
     });
     this.where.append(el('span', 'dx-where-label', 'WHERE'), this.input);
+    this.editAsSql.title = 'Replace the filter chips with the same condition in the WHERE box, to edit it as SQL';
+    this.editAsSql.addEventListener('click', () => this.handlers.editAsSql());
+    this.newCell.title = "Add a SQL cell below that reruns this cell's query with the filter (and sort), and run it";
+    this.newCell.addEventListener('click', () => this.handlers.newCell?.());
     this.clear.title = 'Remove every filter';
-    this.clear.addEventListener('click', () => this.onChange(undefined));
-    this.error.setAttribute('role', 'alert');
-    this.element.append(this.chips, this.where, this.clear, this.error);
+    this.clear.addEventListener('click', () => this.handlers.change(undefined));
+    this.message.setAttribute('role', 'alert');
+    this.element.append(this.chips, this.where, this.editAsSql, this.newCell, this.clear, this.message);
     this.render();
   }
 
@@ -109,19 +126,28 @@ export class FilterBar {
     const editing = this.isDirty();
     this.filter = filter;
     if (!editing) this.input.value = filter?.where ?? '';
-    this.setError(undefined);
+    this.setMessage(undefined);
     this.render();
   }
 
-  setError(message: string | undefined): void {
-    this.error.hidden = !message;
-    this.error.textContent = message ?? '';
-    this.where.classList.toggle('invalid', !!message);
+  /** An error (the kernel rejected the filter) or a warning under the bar; undefined clears it. */
+  setMessage(message: string | undefined, kind: 'error' | 'warning' = 'error'): void {
+    this.message.hidden = !message;
+    this.message.textContent = message ?? '';
+    this.message.classList.toggle('warning', kind === 'warning');
+    this.where.classList.toggle('invalid', !!message && kind === 'error');
     if (message && !this.visible) {
       this.open = true;
       this.render();
-      this.onToggle();
+      this.handlers.toggled();
     }
+  }
+
+  /** Puts text in the WHERE box as if typed (for "Edit as SQL"); update() then shows it as applied. */
+  setDraft(text: string): void {
+    this.input.value = text;
+    this.open = true;
+    this.syncInput();
   }
 
   /** The footer's Filter button: opens the bar on the WHERE box, or closes it while nothing is filtered. */
@@ -139,23 +165,23 @@ export class FilterBar {
     this.open = false;
     this.filter = undefined;
     this.input.value = '';
-    this.setError(undefined);
+    this.setMessage(undefined);
     this.render();
   }
 
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      this.onChange(withWhere(this.filter, this.input.value));
+      this.handlers.change(withWhere(this.filter, this.input.value));
     } else if (event.key === 'Escape') {
       event.preventDefault();
       if (this.isDirty()) {
         this.input.value = this.filter?.where ?? '';
-        this.setError(undefined);
-        this.markDirty();
+        this.setMessage(undefined);
+        this.syncInput();
       } else if (!this.filter) {
         this.close();
-        this.onToggle();
+        this.handlers.toggled();
       }
     }
   }
@@ -171,21 +197,26 @@ export class FilterBar {
         const remove = el('button', 'dx-chip-remove', '×');
         remove.title = 'Remove this filter';
         remove.setAttribute('aria-label', `Remove the filter ${text}`);
-        remove.addEventListener('click', () => this.onChange(withoutCondition(this.filter, index)));
+        remove.addEventListener('click', () => this.handlers.change(withoutCondition(this.filter, index)));
         chip.append(el('span', 'dx-chip-text', text), remove);
         return chip;
       }),
     );
     this.chips.hidden = conditions.length === 0;
+    this.editAsSql.hidden = conditions.length === 0;
+    this.newCell.hidden = !this.filter || !this.handlers.newCell;
     this.clear.hidden = !this.filter;
-    this.markDirty();
+    this.syncInput();
   }
 
   private isDirty(): boolean {
     return this.input.value.trim() !== (this.filter?.where ?? '');
   }
 
-  private markDirty(): void {
+  /** After the text changes: marks an unapplied draft and fits the box to the text. */
+  private syncInput(): void {
     this.where.classList.toggle('dirty', this.isDirty());
+    this.input.style.height = 'auto';
+    if (this.input.scrollHeight) this.input.style.height = `${this.input.scrollHeight}px`;
   }
 }

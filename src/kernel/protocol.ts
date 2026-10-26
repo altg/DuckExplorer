@@ -118,6 +118,7 @@ export interface HistogramBar {
 /** How a histogram's bars were cut, so a `bin` filter selects exactly the rows a bar counts. */
 export interface HistogramBins {
   low: number;
+  high: number;
   width: number;
   count: number;
 }
@@ -161,12 +162,18 @@ export type RendererRequest =
       sort?: SortSpec;
       filter?: FilterSpec;
     }
-  | { type: 'profileResult'; requestId: number; resultId: string; filter?: FilterSpec };
+  | { type: 'profileResult'; requestId: number; resultId: string; filter?: FilterSpec }
+  | { type: 'filterSql'; requestId: number; resultId: string; filter?: FilterSpec }
+  /** Answered by the extension: a SQL cell below the result's own, rerunning its query filtered and sorted. */
+  | { type: 'insertFilteredCell'; requestId: number; resultId: string; filter?: FilterSpec; sort?: SortSpec };
 
 export interface RendererResults {
   /** `rowCount` is the number of rows in the sorted/filtered view. */
   fetchPage: { rows: Cell[][]; rowCount: number };
   profileResult: ResultProfile;
+  /** The filter as one SQL condition over the result's column names. */
+  filterSql: { where: string };
+  insertFilteredCell: Record<string, never>;
 }
 
 export interface RendererResponse {

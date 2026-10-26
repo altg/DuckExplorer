@@ -6,10 +6,11 @@ import { NOTEBOOK_TYPE } from './kernel/protocol';
 import { DuckbookController } from './notebook/controller';
 import { DuckbookSerializer } from './notebook/serializer';
 
-/** Returned from activate() so integration tests can reach the kernel and the tree. */
+/** Returned from activate() so integration tests can reach the kernel, the tree and the controller. */
 export interface DuckExplorerApi {
   kernel: KernelClient;
   tree: SchemaTreeProvider;
+  controller: DuckbookController;
 }
 
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
@@ -96,7 +97,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     }),
     vscode.commands.registerCommand('duckexplorer.showLog', () => log.show()),
   );
-  return { kernel, tree };
+  return { kernel, tree, controller };
 }
 
 export function deactivate(): void {

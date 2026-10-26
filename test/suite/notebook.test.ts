@@ -139,6 +139,41 @@ suite('DuckExplorer notebook', () => {
     );
   });
 
+  test('a filtered result becomes a new SQL cell below its own', async () => {
+    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const source = '-- name: numbers\nSELECT range AS n, range % 3 AS k FROM range(1000);';
+    const notebook = await vscode.workspace.openNotebookDocument(
+      'duckexplorer-notebook',
+      new vscode.NotebookData([
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, source, 'sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 1 AS later', 'sql'),
+      ]),
+    );
+    const editor = await vscode.window.showNotebookDocument(notebook);
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+    await waitFor(() => notebook.cellAt(0).executionSummary?.success !== undefined, 60_000, 'the cell to finish');
+    const table = JSON.parse(Buffer.from(notebook.cellAt(0).outputs[0].items[0].data).toString('utf8'));
+
+    const filter = { conditions: [{ column: 1, op: 'eq', value: '2' }], where: 'n < 100' };
+    const sort = { column: 0, descending: true };
+    const { where } = await api.kernel.request('filterSql', { resultId: table.id, filter });
+    assert.strictEqual(where, 'k = 2 AND (n < 100)');
+
+    await api.controller.insertFilteredCell(editor, { type: 'insertFilteredCell', requestId: 0, resultId: table.id, filter, sort });
+    assert.strictEqual(notebook.cellCount, 3);
+    const added = notebook.cellAt(1);
+    assert.strictEqual(added.document.languageId, 'sql');
+    assert.strictEqual(
+      added.document.getText(),
+      'SELECT *\nFROM (\nSELECT range AS n, range % 3 AS k FROM range(1000)\n)\nWHERE k = 2 AND (n < 100)\nORDER BY n DESC NULLS LAST',
+    );
+    await waitFor(() => added.executionSummary?.success !== undefined, 60_000, 'the new cell to run');
+    assert.strictEqual(added.executionSummary?.success, true);
+    const rerun = JSON.parse(Buffer.from(added.outputs[0].items[0].data).toString('utf8'));
+    assert.strictEqual(rerun.rowCount, 33);
+    assert.deepStrictEqual(rerun.rows.slice(0, 2), [['98', '2'], ['95', '2']]);
+  });
+
   test('the schema tree lists attached databases down to columns', async () => {
     const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(SAMPLES, 'demo.duckdb'), readOnly: true });

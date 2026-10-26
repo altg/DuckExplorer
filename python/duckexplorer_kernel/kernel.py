@@ -206,6 +206,12 @@ class Kernel:
     def profile_result(self, result_id: str, filter_spec: dict | None = None) -> dict:
         return self.results.profile(result_id, filter_spec)
 
+    def filter_sql(self, result_id: str, filter_spec: dict | None) -> dict:
+        return {"where": self.results.filter_sql(result_id, filter_spec)}
+
+    def filtered_query(self, result_id: str, code: str, filter_spec: dict | None, sort: dict | None) -> dict:
+        return {"code": self.results.filtered_query(result_id, code, filter_spec, sort)}
+
     # -- helpers -------------------------------------------------------------------
 
     def _bind_result(self, state: NotebookState, code: str, stored: StoredResult) -> list[str]:

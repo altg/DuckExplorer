@@ -13,7 +13,9 @@ import {
 } from '../kernel/protocol';
 
 /** Kernel methods the results renderer may call (all served on the kernel's side thread). */
-const RENDERER_METHODS = new Set<string>(['fetchPage', 'profileResult'] satisfies RendererRequest['type'][]);
+const KERNEL_METHODS = new Set<string>(['fetchPage', 'profileResult', 'filterSql'] satisfies RendererRequest['type'][]);
+
+type InsertFilteredCell = Extract<RendererRequest, { type: 'insertFilteredCell' }>;
 
 interface QueuedCell {
   cell: vscode.NotebookCell;
@@ -135,7 +137,7 @@ export class DuckbookController implements vscode.Disposable {
   }
 
   private async onRendererMessage(editor: vscode.NotebookEditor, message: RendererRequest): Promise<void> {
-    if (!RENDERER_METHODS.has(message?.type)) {
+    if (!KERNEL_METHODS.has(message?.type) && message?.type !== 'insertFilteredCell') {
       return;
     }
     const { type, requestId, ...params } = message;
@@ -145,7 +147,11 @@ export class DuckbookController implements vscode.Disposable {
       response = { type: 'response', requestId, error: 'expired' };
     } else {
       try {
-        response = { type: 'response', requestId, result: await this.kernel.request(type, params) };
+        const result =
+          message.type === 'insertFilteredCell'
+            ? await this.insertFilteredCell(editor, message)
+            : await this.kernel.request(type, params);
+        response = { type: 'response', requestId, result };
       } catch (err) {
         const expired = err instanceof KernelRequestError && err.code === 'expired';
         response = { type: 'response', requestId, error: expired ? 'expired' : (err as Error).message };
@@ -153,6 +159,45 @@ export class DuckbookController implements vscode.Disposable {
     }
     await this.messaging.postMessage(response, editor);
   }
+
+  /**
+   * Adds a SQL cell below the one whose output shows the result, rerunning its query with the grid's
+   * filter and sort (the kernel rewrites the query), and runs it.
+   */
+  async insertFilteredCell(editor: vscode.NotebookEditor, { resultId, filter, sort }: InsertFilteredCell): Promise<{}> {
+    const source = editor.notebook.getCells().find((cell) => showsResult(cell, resultId));
+    if (!source) {
+      throw new Error('the cell that made this result was run again or removed.');
+    }
+    if (source.document.languageId !== 'sql') {
+      throw new Error('only results of SQL cells can be rerun as a query.');
+    }
+    const { code } = await this.kernel.request<{ code: string }>('filteredQuery', {
+      resultId,
+      code: source.document.getText(),
+      filter,
+      sort,
+    });
+    const index = source.index + 1;
+    const edit = new vscode.WorkspaceEdit();
+    edit.set(editor.notebook.uri, [
+      vscode.NotebookEdit.insertCells(index, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, code, 'sql')]),
+    ]);
+    if (!(await vscode.workspace.applyEdit(edit))) {
+      throw new Error('the notebook could not be edited.');
+    }
+    const range = new vscode.NotebookRange(index, index + 1);
+    editor.selection = range;
+    editor.revealRange(range, vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
+    this.enqueue([editor.notebook.cellAt(index)]);
+    return {};
+  }
+}
+
+function showsResult(cell: vscode.NotebookCell, resultId: string): boolean {
+  return cell.outputs.some((output) =>
+    output.items.some((item) => item.mime === TABLE_MIME && JSON.parse(Buffer.from(item.data).toString('utf8')).id === resultId),
+  );
 }
 
 function notebookDirectory(uri: vscode.Uri): string | undefined {

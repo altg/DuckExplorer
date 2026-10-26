@@ -18,8 +18,14 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
   - **Filtering**: right-click a cell to keep or exclude its value (or, for numbers and dates,
     keep values ≥ or ≤ it); right-click a header for NULL filters and sorting. The **Filter**
     button under a result opens a `WHERE` box for any SQL condition on the result's columns
-    (`amount > 100 AND status = 'open'`, Enter to apply). Filters show as removable chips and
-    combine with each other and with the sort; the footer counts the matching rows.
+    (`amount > 100 AND status = 'open'`, Enter to apply, Shift+Enter for a new line). Filters
+    show as removable chips and combine with each other and with the sort; the footer counts
+    the matching rows.
+  - **Edit as SQL** turns the chips into the same condition in the `WHERE` box
+    (`status = 'shipped' AND order_date BETWEEN '2024-01-01' AND '2024-01-19'`), so you can
+    change it in ways chips can't (`OR`, `IN`, `ILIKE`). **New cell** adds a SQL cell below with
+    the cell's query wrapped in that filter and the grid's sort, and runs it, so the filtered
+    result is kept with the notebook.
   - **Column Explorer**: the **Columns** button under a result shows every column's distribution
     (a histogram for numbers and dates, the most frequent values otherwise), its NULL share,
     distinct count, and min/max/mean, for the rows the filter keeps. Click a histogram bar or a
@@ -91,6 +97,11 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
   you clicked; `≥`/`≤` compare typed values, and a histogram-bar filter reuses the expression
   that counted the bar. Column statistics are computed in a few scans when the Columns view
   opens, then cached with the result for that filter.
+- Written as SQL, value filters become typed comparisons (DOUBLE values stay quoted, because
+  DuckDB reads a bare `0.30000000000000004` as a DECIMAL and converts it inexactly) and bars
+  become ranges. Integer and DATE bars are exact; a DOUBLE or timestamp value right on a bar's
+  edge can land on the other side in SQL, and the grid says so when the row count changes.
+  The new cell reruns only the cell's last statement, as a subquery.
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 

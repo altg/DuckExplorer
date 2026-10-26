@@ -1,7 +1,7 @@
 import type { Cell, FilterCondition, FilterSpec, SortSpec, TableResult } from '../kernel/protocol';
 import type { HostClient } from './client';
 import { ColumnExplorer } from './columns';
-import { describeCondition, FilterBar, withCondition, withoutColumn } from './filters';
+import { describeCondition, FilterBar, withCondition, withoutColumn, withWhere } from './filters';
 import { ContextMenu, type MenuEntry } from './menu';
 import { el, shortType } from './util';
 
@@ -92,11 +92,13 @@ export class ResultGrid {
       this.viewport.remove();
     } else if (client.available) {
       if (result.rowCount > 0) {
-        this.filterBar = new FilterBar(
-          result.columns,
-          (filter) => void this.applyView(this.sort, filter, 'filter'),
-          () => this.renderFooter(),
-        );
+        this.filterBar = new FilterBar(result.columns, {
+          change: (filter) => void this.applyView(this.sort, filter, 'filter'),
+          toggled: () => this.renderFooter(),
+          editAsSql: () => void this.editAsSql(),
+          // Only SQL cells bind their result to Python names; their query can be rerun filtered.
+          newCell: result.boundTo ? () => void this.newCell() : undefined,
+        });
         root.prepend(this.filterBar.element);
       }
       this.explorer = new ColumnExplorer(
@@ -424,7 +426,7 @@ export class ResultGrid {
   private async applyView(sort: SortSpec | undefined, filter: FilterSpec | undefined, change: 'sort' | 'filter'): Promise<void> {
     const request = ++this.viewRequest;
     this.viewError = undefined;
-    this.filterBar?.setError(undefined);
+    this.filterBar?.setMessage(undefined);
     if (!sort && !filter) {
       this.pendingView = undefined;
       this.commitView(sort, filter, this.result.rowCount, this.result.rows);
@@ -441,9 +443,41 @@ export class ResultGrid {
       this.markExpired();
     } else {
       if (change === 'sort') this.viewError = `Could not sort: ${response.error}`;
-      else this.filterBar?.setError(response.error);
+      else this.filterBar?.setMessage(response.error);
       this.renderFooter();
     }
+  }
+
+  /** Replaces the chips with the same filter written as SQL in the WHERE box. */
+  private async editAsSql(): Promise<void> {
+    const filter = this.filter;
+    if (!filter?.conditions.length) return;
+    const response = await this.client.filterSql(this.result.id, filter);
+    if (this.signal.aborted || filter !== this.filter) return;
+    if (!response.result) {
+      if (response.error === 'expired') this.markExpired();
+      else this.filterBar?.setMessage(response.error);
+      return;
+    }
+    const { where } = response.result;
+    const before = this.total;
+    this.filterBar?.setDraft(where);
+    await this.applyView(this.sort, withWhere(undefined, where), 'filter');
+    if (this.filter?.where === where && !this.filter.conditions.length && this.total !== before) {
+      this.filterBar?.setMessage(
+        `This SQL keeps ${this.total.toLocaleString()} rows where the chips kept ${before.toLocaleString()}: ` +
+          "values on the edge of a histogram bar can fall on the other side in SQL's comparisons.",
+        'warning',
+      );
+    }
+  }
+
+  /** Asks the extension for a SQL cell below this result's cell that reruns its query, filtered and sorted. */
+  private async newCell(): Promise<void> {
+    const response = await this.client.insertFilteredCell(this.result.id, this.filter, this.sort);
+    if (this.signal.aborted || response.result) return;
+    if (response.error === 'expired') this.markExpired();
+    else this.filterBar?.setMessage(`Could not add the cell: ${response.error}`);
   }
 
   private commitView(sort: SortSpec | undefined, filter: FilterSpec | undefined, total: number, firstPage: Cell[][]): void {

@@ -124,6 +124,23 @@ class ResultStore:
                 stored.profiles.move_to_end(key)
         return cached
 
+    def filter_sql(self, result_id: str, filter_spec: dict | None) -> str:
+        """The filter as one SQL condition over the result's column names (see filters.to_sql)."""
+        stored = self.get(result_id)
+        spec = filters.normalize(filter_spec)
+        with self._session.side_lock:
+            return filters.to_sql(spec, stored.columns, self._session.side)
+
+    def filtered_query(self, result_id: str, code: str, filter_spec: dict | None, sort: dict | None) -> str:
+        """The SQL cell `code` that made the result, rewritten to return the grid's filtered, sorted view."""
+        stored = self.get(result_id)
+        spec = filters.normalize(filter_spec)
+        with self._session.side_lock:
+            where = filters.to_sql(spec, stored.columns, self._session.side)
+            sort_key = _sort_key(sort, stored)
+            order_by = "" if sort_key is None else filters.order_sql(sort_key, stored.columns, self._session.side)
+        return filters.filtered_query(code, where, order_by)
+
     def describe(self, stored: StoredResult, page_size: int, **extra) -> dict:
         """The table payload sent to the notebook renderer: metadata plus the first page."""
         return {

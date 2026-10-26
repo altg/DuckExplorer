@@ -35,6 +35,14 @@ export class HostClient {
     return this.request({ type: 'profileResult', requestId: 0, resultId, filter });
   }
 
+  filterSql(resultId: string, filter: FilterSpec): Promise<Reply<RendererResults['filterSql']>> {
+    return this.request({ type: 'filterSql', requestId: 0, resultId, filter });
+  }
+
+  insertFilteredCell(resultId: string, filter?: FilterSpec, sort?: SortSpec): Promise<Reply<RendererResults['insertFilteredCell']>> {
+    return this.request({ type: 'insertFilteredCell', requestId: 0, resultId, filter, sort });
+  }
+
   private request<T>(request: RendererRequest): Promise<Reply<T>> {
     request.requestId = this.nextId++;
     return new Promise((resolve) => {
