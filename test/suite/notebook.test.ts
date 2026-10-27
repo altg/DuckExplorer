@@ -196,4 +196,50 @@ suite('DuckExplorer notebook', () => {
       ['order_id BIGINT', 'customer_id BIGINT', 'order_date DATE', 'status VARCHAR', 'channel VARCHAR'],
     );
   });
+
+  test('clicking a table in the tree opens its summary', async () => {
+    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const { alias } = await api.kernel.request('attach', { path: path.join(workDir, 'summary.duckdb') });
+    try {
+      await api.kernel.request('executeSql', {
+        notebook: 'summary-test',
+        code: `CREATE TABLE ${alias}.main.items AS SELECT range AS id, 'item ' || (range % 4) AS label FROM range(50)`,
+      });
+      const roots: any[] = await api.tree.getChildren();
+      const [main] = await api.tree.getChildren(roots.find((n) => n.kind === 'database' && n.db.name === alias));
+      const [items] = await api.tree.getChildren(main);
+      const { command } = api.tree.getTreeItem(items);
+      assert.strictEqual(command?.command, 'duckexplorer.showSummary');
+
+      await vscode.commands.executeCommand(command!.command, ...(command!.arguments ?? []));
+      await waitFor(() => api.summary.current?.type === 'summary', 30_000, 'the summary');
+      const { relation, table } = api.summary.current;
+      assert.deepStrictEqual([relation.database, relation.name, relation.kind], [alias, 'items', 'table']);
+      assert.strictEqual(table.rowCount, 50);
+      const profile = await api.kernel.request('profileResult', { resultId: table.id });
+      assert.deepStrictEqual(
+        profile.columns[1].top.map((t: any) => [t.value, t.count]),
+        [['item 0', 13], ['item 1', 13], ['item 2', 12], ['item 3', 12]],
+      );
+      // The tab model is updated asynchronously.
+      const summaryTab = () =>
+        vscode.window.tabGroups.all
+          .flatMap((group) => group.tabs)
+          .some((tab) => tab.input instanceof vscode.TabInputWebview && tab.label === 'Summary: items');
+      await waitFor(summaryTab, 10_000, 'the summary tab');
+
+      // "New cell" in the panel's filter bar: the whole table, filtered, in a visible notebook.
+      const filter = { conditions: [{ column: 1, op: 'eq', value: 'item 2' }] };
+      await (api.summary as any).insertFilteredCell({ type: 'insertFilteredCell', requestId: 0, resultId: table.id, filter });
+      const added = () =>
+        vscode.workspace.notebookDocuments
+          .flatMap((doc) => doc.getCells())
+          .find((cell) => cell.document.getText().endsWith("WHERE label = 'item 2'"));
+      await waitFor(() => added()?.executionSummary?.success !== undefined, 30_000, 'the new cell to run');
+      assert.strictEqual(added()!.executionSummary?.success, true);
+      assert.strictEqual(JSON.parse(Buffer.from(added()!.outputs[0].items[0].data).toString('utf8')).rowCount, 12);
+    } finally {
+      await api.kernel.request('detach', { alias });
+    }
+  });
 });

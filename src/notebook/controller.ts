@@ -1,21 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { KernelClient, KernelRequestError } from '../kernel/kernelProcess';
-import {
-  ExecuteResult,
-  KernelOutput,
-  NOTEBOOK_TYPE,
-  PLOTLY_MIME,
-  RENDERER_ID,
-  RendererRequest,
-  RendererResponse,
-  TABLE_MIME,
-} from '../kernel/protocol';
-
-/** Kernel methods the results renderer may call (all served on the kernel's side thread). */
-const KERNEL_METHODS = new Set<string>(['fetchPage', 'profileResult', 'filterSql'] satisfies RendererRequest['type'][]);
-
-type InsertFilteredCell = Extract<RendererRequest, { type: 'insertFilteredCell' }>;
+import { KernelClient } from '../kernel/kernelProcess';
+import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, PLOTLY_MIME, RENDERER_ID, TABLE_MIME } from '../kernel/protocol';
+import { answerGridRequest, InsertFilteredCell, isGridRequest } from './gridRequests';
 
 interface QueuedCell {
   cell: vscode.NotebookCell;
@@ -136,28 +123,11 @@ export class DuckbookController implements vscode.Disposable {
     }
   }
 
-  private async onRendererMessage(editor: vscode.NotebookEditor, message: RendererRequest): Promise<void> {
-    if (!KERNEL_METHODS.has(message?.type) && message?.type !== 'insertFilteredCell') {
-      return;
+  private async onRendererMessage(editor: vscode.NotebookEditor, message: unknown): Promise<void> {
+    if (isGridRequest(message)) {
+      const response = await answerGridRequest(this.kernel, message, (request) => this.insertFilteredCell(editor, request));
+      await this.messaging.postMessage(response, editor);
     }
-    const { type, requestId, ...params } = message;
-    let response: RendererResponse;
-    if (!this.kernel.isRunning) {
-      // Outputs from a previous session (or a reopened file): don't start a kernel just to say so.
-      response = { type: 'response', requestId, error: 'expired' };
-    } else {
-      try {
-        const result =
-          message.type === 'insertFilteredCell'
-            ? await this.insertFilteredCell(editor, message)
-            : await this.kernel.request(type, params);
-        response = { type: 'response', requestId, result };
-      } catch (err) {
-        const expired = err instanceof KernelRequestError && err.code === 'expired';
-        response = { type: 'response', requestId, error: expired ? 'expired' : (err as Error).message };
-      }
-    }
-    await this.messaging.postMessage(response, editor);
   }
 
   /**

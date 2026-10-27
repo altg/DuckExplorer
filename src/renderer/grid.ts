@@ -8,7 +8,7 @@ import { el, shortType } from './util';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ROW_HEIGHT = 24;
 const HEADER_HEIGHT = 30;
-const MAX_VIEWPORT_HEIGHT = 420;
+const MAX_VIEWPORT_HEIGHT = 420; // in notebook outputs; the summary panel passes its own
 const OVERSCAN_ROWS = 8;
 const ROWNUM_MIN_WIDTH = 44;
 // Browsers cap element heights (~33M px in Chromium); taller results scroll proportionally.
@@ -24,6 +24,15 @@ const TEMPORAL_TYPE = /^(DATE|TIME|TIMESTAMP(_S|_MS|_NS)?|TIMESTAMP WITH TIME ZO
  * filter bar, cell and header menus, Column Explorer bars) the stored result; the grid pages
  * through that view. The footer switches between the rows and the Column Explorer.
  */
+export interface GridOptions {
+  /** The view to open on (default: the rows). */
+  tab?: 'rows' | 'columns';
+  /** Height limit of the rows and the Column Explorer, in px (default 420). */
+  maxHeight?: number;
+  /** Offer "New cell" in the filter bar (default: for results of SQL cells, which bind to Python names). */
+  queryCell?: boolean;
+}
+
 export class ResultGrid {
   private readonly pages = new Map<number, Cell[][]>();
   private readonly inflight = new Set<number>();
@@ -46,11 +55,13 @@ export class ResultGrid {
   /** Bumped whenever the loaded pages are discarded, so late responses for them are dropped. */
   private generation = 0;
   private tab: 'rows' | 'columns' = 'rows';
+  private maxHeight: number;
   private suppressClick = false;
   private frame = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private renderPending = false;
 
+  private readonly root: HTMLDivElement;
   private readonly viewport: HTMLDivElement;
   private readonly sizer: HTMLDivElement;
   private readonly header: HTMLDivElement;
@@ -65,7 +76,9 @@ export class ResultGrid {
     private readonly result: TableResult,
     private readonly client: HostClient,
     private readonly signal: AbortSignal,
+    options: GridOptions = {},
   ) {
+    this.maxHeight = options.maxHeight ?? MAX_VIEWPORT_HEIGHT;
     this.pages.set(0, result.rows);
     this.total = result.rowCount;
     this.expired = !client.available && result.rowCount > result.rows.length;
@@ -76,6 +89,7 @@ export class ResultGrid {
     this.computeOffsets();
 
     const root = el('div', 'dx-result');
+    this.root = root;
     this.viewport = el('div', 'dx-viewport');
     this.viewport.tabIndex = 0;
     this.sizer = el('div', 'dx-sizer');
@@ -96,8 +110,7 @@ export class ResultGrid {
           change: (filter) => void this.applyView(this.sort, filter, 'filter'),
           toggled: () => this.renderFooter(),
           editAsSql: () => void this.editAsSql(),
-          // Only SQL cells bind their result to Python names; their query can be rerun filtered.
-          newCell: result.boundTo ? () => void this.newCell() : undefined,
+          newCell: (options.queryCell ?? result.boundTo !== undefined) ? () => void this.newCell() : undefined,
         });
         root.prepend(this.filterBar.element);
       }
@@ -134,6 +147,13 @@ export class ResultGrid {
 
     this.layout();
     this.renderFooter();
+    if (options.tab === 'columns') this.setTab('columns');
+  }
+
+  /** For a container that resizes (the summary panel). */
+  setMaxHeight(maxHeight: number): void {
+    this.maxHeight = maxHeight;
+    this.layout();
   }
 
   // -- layout -------------------------------------------------------------------
@@ -169,7 +189,7 @@ export class ResultGrid {
    */
   private scrollModel(): { rows: number; bodyHeight: number; virtualHeight: number; ratio: number } {
     const rows = this.rowCount;
-    const bodyHeight = Math.max(ROW_HEIGHT, (this.viewport.clientHeight || MAX_VIEWPORT_HEIGHT) - HEADER_HEIGHT);
+    const bodyHeight = Math.max(ROW_HEIGHT, (this.viewport.clientHeight || this.maxHeight) - HEADER_HEIGHT);
     const realHeight = rows * ROW_HEIGHT;
     const virtualHeight = Math.min(realHeight, MAX_SCROLL_HEIGHT);
     const ratio = virtualHeight > bodyHeight ? (realHeight - bodyHeight) / (virtualHeight - bodyHeight) : 1;
@@ -182,7 +202,8 @@ export class ResultGrid {
     this.sizer.style.width = `${this.totalWidth}px`;
     this.sizer.style.height = `${contentHeight}px`;
     // Leave room for a horizontal scrollbar so short results don't get a vertical one too.
-    this.viewport.style.height = `${Math.min(contentHeight + 14, MAX_VIEWPORT_HEIGHT)}px`;
+    this.viewport.style.height = `${Math.min(contentHeight + 14, this.maxHeight)}px`;
+    this.root.style.setProperty('--dx-max-height', `${this.maxHeight}px`);
     this.renderRows();
   }
 
@@ -314,10 +335,15 @@ export class ResultGrid {
   }
 
   private renderFooter(): void {
-    const { rowCount, columns, elapsedMs, boundTo } = this.result;
-    const rows = this.filter
+    const { rowCount, columns, elapsedMs, boundTo, sampledFrom } = this.result;
+    let rows = this.filter
       ? `${this.total.toLocaleString()} of ${rowCount.toLocaleString()} rows`
       : `${rowCount.toLocaleString()} ${rowCount === 1 ? 'row' : 'rows'}`;
+    if (sampledFrom !== undefined) {
+      rows = this.filter
+        ? `${this.total.toLocaleString()} of ${rowCount.toLocaleString()} sampled rows`
+        : `${rowCount.toLocaleString()} rows sampled from ${sampledFrom.toLocaleString()}`;
+    }
     const parts = [rows, `${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`];
     if (elapsedMs !== undefined) parts.push(formatDuration(elapsedMs));
     const children: HTMLElement[] = [];

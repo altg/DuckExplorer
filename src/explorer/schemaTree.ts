@@ -159,6 +159,8 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         item.tooltip = tooltip;
         item.iconPath = new vscode.ThemeIcon(relation.kind === 'view' ? 'eye' : 'table');
         item.contextValue = relation.kind;
+        // A click shows the summary; the twistie still lists the columns.
+        item.command = { command: 'duckexplorer.showSummary', title: 'Show Summary', arguments: [node] };
         return item;
       }
       case 'column': {

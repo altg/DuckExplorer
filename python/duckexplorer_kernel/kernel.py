@@ -20,7 +20,10 @@ import pyarrow as pa
 
 from . import pyexec
 from .results import ResultStore, StoredResult
-from .session import Session
+from .session import Session, quote_ident
+
+# Larger tables and views are summarized from a random sample of this many rows.
+SUMMARY_ROWS = 1_000_000
 
 # `-- name: sales` on the first non-blank line of a SQL cell binds the result to `sales`.
 _NAME_DIRECTIVE = re.compile(r"\A\s*--\s*name\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -205,6 +208,27 @@ class Kernel:
 
     def profile_result(self, result_id: str, filter_spec: dict | None = None) -> dict:
         return self.results.profile(result_id, filter_spec)
+
+    def summarize(self, database: str, schema: str, name: str) -> dict:
+        """A table or view as a stored result, for the summary panel (Column Explorer, rows, filters).
+
+        Holds every row, or a reservoir sample of SUMMARY_ROWS rows when there are more; then the
+        payload's `sampledFrom` is the full row count. Runs on the side cursor, beside a running cell.
+        """
+        qualified = ".".join(quote_ident(part) for part in (database, schema, name))
+        started = time.perf_counter()
+        with self.session.side_lock:
+            side = self.session.side
+            count = side.execute(f"SELECT count(*) FROM {qualified}").fetchone()[0]
+            sample = f" USING SAMPLE reservoir({SUMMARY_ROWS} ROWS) REPEATABLE (42)" if count > SUMMARY_ROWS else ""
+            rel = side.sql(f"SELECT * FROM {qualified}{sample}")
+            table = rel.to_arrow_table()
+            types = [str(t) for t in rel.types]
+        stored = self.results.add(table, types)
+        extra: dict[str, Any] = {"elapsedMs": round(_ms_since(started), 1)}
+        if sample:
+            extra["sampledFrom"] = count
+        return self.results.describe(stored, self.page_size, **extra)
 
     def filter_sql(self, result_id: str, filter_spec: dict | None) -> dict:
         return {"where": self.results.filter_sql(result_id, filter_spec)}

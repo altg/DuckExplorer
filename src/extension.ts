@@ -1,16 +1,19 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { AttachedDatabases, qualifiedName, quoteIdentifier, SchemaTreeProvider, TreeNode } from './explorer/schemaTree';
+import { TableSummaryPanel } from './explorer/summaryPanel';
 import { KernelClient } from './kernel/kernelProcess';
 import { NOTEBOOK_TYPE } from './kernel/protocol';
 import { DuckbookController } from './notebook/controller';
+import { openNotebookWith, runInNotebook } from './notebook/insert';
 import { DuckbookSerializer } from './notebook/serializer';
 
-/** Returned from activate() so integration tests can reach the kernel, the tree and the controller. */
+/** Returned from activate() so integration tests can reach the kernel, tree, controller and summary. */
 export interface DuckExplorerApi {
   kernel: KernelClient;
   tree: SchemaTreeProvider;
   controller: DuckbookController;
+  summary: TableSummaryPanel;
 }
 
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
@@ -19,11 +22,13 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   const attached = new AttachedDatabases(context.workspaceState);
   const tree = new SchemaTreeProvider(kernel, attached);
   const controller = new DuckbookController(kernel, () => tree.scheduleRefresh());
+  const summary = new TableSummaryPanel(context.extensionUri, kernel);
 
   context.subscriptions.push(
     log,
     kernel,
     controller,
+    summary,
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new DuckbookSerializer(), DuckbookSerializer.options),
     vscode.window.registerTreeDataProvider('duckexplorer.schema', tree),
 
@@ -37,6 +42,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
         }
       }
       tree.refresh();
+      summary.reload();
     }),
     vscode.window.onDidChangeActiveColorTheme(() => kernel.reconfigure()),
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -72,6 +78,19 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
         return runInNotebook(`SELECT * FROM ${qualifiedName(node)} LIMIT 100;`);
       }
     }),
+    vscode.commands.registerCommand('duckexplorer.showSummary', (node?: TreeNode) => {
+      if (node?.kind === 'relation') {
+        const { db, schema, relation } = node;
+        return summary.show({
+          database: db.name,
+          schema: schema.name,
+          name: relation.name,
+          kind: relation.kind,
+          comment: relation.comment,
+          qualified: qualifiedName(node),
+        });
+      }
+    }),
     vscode.commands.registerCommand('duckexplorer.copyName', (node?: TreeNode) => {
       const name =
         node?.kind === 'relation'
@@ -97,7 +116,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     }),
     vscode.commands.registerCommand('duckexplorer.showLog', () => log.show()),
   );
-  return { kernel, tree, controller };
+  return { kernel, tree, controller, summary };
 }
 
 export function deactivate(): void {
@@ -154,31 +173,4 @@ async function addDatabase(kernel: KernelClient, attached: AttachedDatabases, tr
     }
   }
   tree.refresh();
-}
-
-async function openNotebookWith(sql: string): Promise<vscode.NotebookEditor> {
-  const cell = new vscode.NotebookCellData(vscode.NotebookCellKind.Code, sql, 'sql');
-  const document = await vscode.workspace.openNotebookDocument(NOTEBOOK_TYPE, new vscode.NotebookData([cell]));
-  return vscode.window.showNotebookDocument(document);
-}
-
-/** Adds a SQL cell to the active DuckDB notebook (or a new one) and runs it. */
-async function runInNotebook(sql: string): Promise<void> {
-  let editor = vscode.window.activeNotebookEditor;
-  let index: number;
-  if (editor?.notebook.notebookType === NOTEBOOK_TYPE) {
-    index = editor.selection.isEmpty ? editor.notebook.cellCount : editor.selection.end;
-    const edit = new vscode.WorkspaceEdit();
-    edit.set(editor.notebook.uri, [
-      vscode.NotebookEdit.insertCells(index, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, sql, 'sql')]),
-    ]);
-    await vscode.workspace.applyEdit(edit);
-  } else {
-    editor = await openNotebookWith(sql);
-    index = 0;
-  }
-  const range = new vscode.NotebookRange(index, index + 1);
-  editor.selection = range;
-  editor.revealRange(range, vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
-  await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: index, end: index + 1 }], document: editor.notebook.uri });
 }

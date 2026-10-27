@@ -40,6 +40,11 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
   - A DataFrame or DuckDB relation as the last expression of a Python cell renders as a grid.
   - Relative paths (`ATTACH 'x.duckdb'`, `read_csv('data.csv')`) resolve against the notebook's
     folder. Stop runs with the notebook's Interrupt button.
+- **Table summary**: click a table or view in the Databases view (the arrow still lists its
+  columns) to open its summary beside the notebook: the Column Explorer for the whole relation,
+  its rows, and the same sorting and filters as under a notebook cell. **New cell** there writes
+  `SELECT * FROM <table> WHERE …` into the notebook. Tables over 1,000,000 rows are summarized
+  from a random sample, which the panel says. **Refresh** reads the rows again.
 - **Preview Table** from the tree adds and runs `SELECT * … LIMIT 100` in the active notebook.
 
 ## Requirements
@@ -67,6 +72,10 @@ python samples/make_sample_db.py
 Then press **F5** ("Run DuckExplorer") to open an Extension Development Host on the `samples`
 folder, open `demo.duckbook` and choose **Run All**.
 
+From a terminal, `npm run dev` builds and opens the same window without the debugger (run it
+again to rebuild and reload). It passes absolute paths: `code --extensionDevelopmentPath=.`
+doesn't work, because the `code` command reads a relative path from the root of the drive.
+
 ## Settings
 
 | Setting | Default | Meaning |
@@ -89,8 +98,11 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 - One kernel process owns the DuckDB connection, so SQL and Python share one session, and
   DuckDB's one-writer file lock is never contended between them.
 - Result pages are rendered with DuckDB's own `VARCHAR` casts, so values look exactly as in the
-  DuckDB CLI. Page, sort, column-statistics and schema requests run on a second cursor, so they
-  don't wait behind a running cell.
+  DuckDB CLI. Page, sort, filter, column-statistics, schema and table-summary requests run on a
+  second cursor, so they don't wait behind a running cell.
+- A table summary loads the relation (or a 1,000,000-row reservoir sample) as a stored result,
+  like a query's, so the summary panel reuses the notebook grid and Column Explorer. The panel
+  is a webview that sends the grid's requests through the extension to the kernel.
 - A sorted or filtered grid pages through row numbers that DuckDB selected and ordered once
   (NULLs last, ties in query order); the stored result and the `df` DataFrame keep every row in
   the query's order. Value filters compare the text the grid shows, so they match exactly what
@@ -105,9 +117,10 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
-Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view), `src/notebook`
-(serializer + controller), `src/renderer` (grid, filter bar and menus, Column Explorer, Plotly), `python/duckexplorer_kernel`
-(kernel), `samples` (demo database builder + notebook).
+Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view, summary panel),
+`src/notebook` (serializer, controller, grid requests), `src/renderer` (grid, filter bar and
+menus, Column Explorer, Plotly, the summary panel's page), `python/duckexplorer_kernel` (kernel),
+`samples` (demo database builder + notebook).
 
 ## Tests
 
@@ -119,8 +132,8 @@ npm test              # VS Code integration test (downloads a test build of VS C
 ## Roadmap
 
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
-  grid. Next: table summary on click, schema-aware SQL autocomplete, running `.sql` files, query
-  history, export (CSV/Parquet/Excel), drag-and-drop data files, a "Chart this" builder,
-  Altair/Vega-Lite output, streaming cell output.
+  grid (with Edit as SQL and New cell), table summary on click. Next: schema-aware SQL
+  autocomplete, running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop
+  data files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

@@ -4,6 +4,7 @@ src/**
 test/**
 out-test/**
 samples/**
+scripts/**
 python/tests/**
 **/__pycache__/**
 **/*.map

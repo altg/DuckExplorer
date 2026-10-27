@@ -435,7 +435,7 @@
 /* -- Column Explorer ------------------------------------------------------------ */
 
 .dx-columns {
-  max-height: 420px;
+  max-height: var(--dx-max-height, 420px);
   overflow: auto;
   border: 1px solid var(--dx-border);
   border-radius: 4px;

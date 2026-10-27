@@ -1,3 +1,10 @@
+/** In the summary panel's webview (src/renderer/summary.ts). */
+declare function acquireVsCodeApi(): {
+  postMessage(message: unknown): void;
+  getState(): unknown;
+  setState(state: unknown): void;
+};
+
 declare module '*.css' {
   const css: string;
   export default css;

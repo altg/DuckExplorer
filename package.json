@@ -97,6 +97,12 @@
         "icon": "$(table)"
       },
       {
+        "command": "duckexplorer.showSummary",
+        "title": "Show Summary",
+        "category": "DuckExplorer",
+        "icon": "$(graph)"
+      },
+      {
         "command": "duckexplorer.copyName",
         "title": "Copy Name",
         "category": "DuckExplorer"
@@ -149,14 +155,19 @@
           "group": "inline"
         },
         {
-          "command": "duckexplorer.previewTable",
+          "command": "duckexplorer.showSummary",
           "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
           "group": "1_main@1"
         },
         {
+          "command": "duckexplorer.previewTable",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "group": "1_main@2"
+        },
+        {
           "command": "duckexplorer.copyName",
           "when": "view == duckexplorer.schema && viewItem != message",
-          "group": "1_main@2"
+          "group": "1_main@3"
         },
         {
           "command": "duckexplorer.detachDatabase",
@@ -172,6 +183,10 @@
       "commandPalette": [
         {
           "command": "duckexplorer.previewTable",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.showSummary",
           "when": "false"
         },
         {
@@ -212,6 +227,7 @@
     "compile": "npm run typecheck && node esbuild.mjs",
     "typecheck": "tsc -p . --noEmit && tsc -p src/renderer --noEmit",
     "watch": "node esbuild.mjs --watch",
+    "dev": "npm run compile && node scripts/dev.mjs",
     "compile-tests": "tsc -p test",
     "pretest": "npm run compile && npm run compile-tests",
     "test": "node out-test/runTest.js",

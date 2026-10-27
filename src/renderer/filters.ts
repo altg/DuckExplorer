@@ -108,7 +108,7 @@ export class FilterBar {
     this.where.append(el('span', 'dx-where-label', 'WHERE'), this.input);
     this.editAsSql.title = 'Replace the filter chips with the same condition in the WHERE box, to edit it as SQL';
     this.editAsSql.addEventListener('click', () => this.handlers.editAsSql());
-    this.newCell.title = "Add a SQL cell below that reruns this cell's query with the filter (and sort), and run it";
+    this.newCell.title = 'Add a SQL cell with this query, filtered and sorted like the grid, and run it';
     this.newCell.addEventListener('click', () => this.handlers.newCell?.());
     this.clear.title = 'Remove every filter';
     this.clear.addEventListener('click', () => this.handlers.change(undefined));

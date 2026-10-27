@@ -1,0 +1,110 @@
+/* The table summary panel, around the results grid (styles.css). */
+
+body {
+  margin: 0;
+  padding: 14px 20px 12px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.dx-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 20px;
+  margin-bottom: 12px;
+}
+
+.dx-summary-names {
+  min-width: 0;
+}
+
+.dx-summary-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dx-summary-title h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.dx-summary-kind {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.3));
+  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dx-summary-where {
+  margin-top: 3px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+}
+
+.dx-summary-comment {
+  max-width: 80ch;
+  margin: 6px 0 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-summary-note {
+  max-width: 80ch;
+  margin: 6px 0 0;
+  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+}
+
+.dx-summary-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.dx-button {
+  padding: 4px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dx-button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.dx-button.secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.dx-button.secondary:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.dx-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.dx-summary-status {
+  padding: 16px 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-summary-status.dx-error {
+  color: var(--vscode-errorForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: pre-wrap;
+}

@@ -23,6 +23,8 @@ export interface TableResult {
   elapsedMs?: number;
   /** Python variables the result was bound to (SQL cells only). */
   boundTo?: string[];
+  /** Table summaries of large relations: the result is a random sample of this many rows. */
+  sampledFrom?: number;
 }
 
 export type KernelOutput =
@@ -175,6 +177,27 @@ export interface RendererResults {
   filterSql: { where: string };
   insertFilteredCell: Record<string, never>;
 }
+
+// Summary panel (src/explorer/summaryPanel.ts <-> src/renderer/summary.ts). The panel's grid also
+// sends RendererRequests and receives RendererResponses.
+
+/** The table or view a summary shows. */
+export interface SummaryRelation {
+  database: string;
+  schema: string;
+  name: string;
+  kind: 'table' | 'view';
+  comment: string | null;
+  /** The shortest name that resolves to it, for SQL written into notebooks. */
+  qualified: string;
+}
+
+export type SummaryMessage =
+  | { type: 'loading'; relation: SummaryRelation }
+  | { type: 'summary'; relation: SummaryRelation; table: TableResult }
+  | { type: 'error'; relation: SummaryRelation; message: string };
+
+export type SummaryAction = { type: 'ready' } | { type: 'preview' } | { type: 'refresh' };
 
 export interface RendererResponse {
   type: 'response';

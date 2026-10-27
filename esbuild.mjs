@@ -33,6 +33,16 @@ const contexts = await Promise.all([
     chunkNames: 'chunks/[name]-[hash]',
     loader: { '.css': 'text' },
   }),
+  // Table summary panel webview: one classic script, sharing the grid with the renderer.
+  esbuild.context({
+    ...common,
+    entryPoints: { summary: 'src/renderer/summary.ts' },
+    outdir: 'dist',
+    platform: 'browser',
+    format: 'iife',
+    target: 'es2022',
+    loader: { '.css': 'text' },
+  }),
 ]);
 
 if (watch) {
