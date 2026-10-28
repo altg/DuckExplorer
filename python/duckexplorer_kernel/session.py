@@ -35,15 +35,41 @@ class Session:
         self.con.execute("SET python_scan_all_frames = true")
         self.side = self.con.cursor()
         self.side_lock = threading.Lock()
-        self.current_database = self._read_current_database()
-
-    def _read_current_database(self) -> str:
-        return self.con.execute("SELECT current_database()").fetchone()[0]
+        self.current_database = self.current_schema = ""
+        # Temporary tables and views belong to the connection that made them: the side cursor
+        # can't list the main connection's, so they are read here, on the main thread.
+        self.temp_relations: list[dict] = []
+        self.refresh_current_database()
 
     def refresh_current_database(self) -> str:
-        """Call on the main thread after anything that may have run USE."""
-        self.current_database = self._read_current_database()
+        """Call on the main thread after anything that may have run USE or made temporary tables."""
+        self.current_database, self.current_schema = self.con.execute(
+            "SELECT current_database(), current_schema()"
+        ).fetchone()
+        self.temp_relations = self._read_temp_relations()
         return self.current_database
+
+    def _read_temp_relations(self) -> list[dict]:
+        columns = self.con.execute(
+            """
+            SELECT table_name, column_name, data_type, is_nullable
+            FROM duckdb_columns()
+            WHERE database_name = 'temp'
+            ORDER BY table_name, column_index
+            """
+        ).fetchall()
+        if not columns:
+            return []
+        views = self.con.execute("SELECT view_name FROM duckdb_views() WHERE database_name = 'temp'").fetchall()
+        view_names = {row[0] for row in views}
+        relations: dict[str, dict] = {}
+        for name, column, data_type, nullable in columns:
+            kind = "view" if name in view_names else "table"
+            relation = relations.setdefault(
+                name, {"name": name, "kind": kind, "rowEstimate": None, "comment": None, "columns": []}
+            )
+            relation["columns"].append({"name": column, "type": data_type, "nullable": bool(nullable)})
+        return list(relations.values())
 
     # -- attach / detach -----------------------------------------------------------
 
@@ -90,8 +116,9 @@ class Session:
 
     # -- catalog -------------------------------------------------------------------
 
-    def schema(self) -> dict:
-        """Database → schema → table/view → column tree for every user database."""
+    def schema(self, include_temp: bool = False) -> dict:
+        """Database → schema → table/view → column tree for every user database, and for `temp`
+        (temporary tables and views) when include_temp is set."""
         with self.side_lock:
             cur = self.side
             databases = cur.execute(
@@ -103,8 +130,13 @@ class Session:
                 """
             ).fetchall()
             names = [row[0] for row in databases]
+            current = {"current": self.current_database, "currentSchema": self.current_schema}
+            temp_db = []
+            if include_temp and self.temp_relations:
+                temp_schema = {"name": "main", "relations": self.temp_relations}
+                temp_db.append({"name": "temp", "path": None, "readOnly": False, "type": "duckdb", "schemas": [temp_schema]})
             if not names:
-                return {"current": self.current_database, "databases": []}
+                return {**current, "databases": temp_db}
             schemas = cur.execute(
                 """
                 SELECT database_name, schema_name
@@ -164,16 +196,13 @@ class Session:
             if rel_node is not None:
                 rel_node["columns"].append({"name": column, "type": data_type, "nullable": bool(nullable)})
 
-        return {
-            "current": self.current_database,
-            "databases": [
-                {
-                    **db,
-                    "schemas": [
-                        {**schema, "relations": list(schema["relations"].values())}
-                        for schema in db["schemas"].values()
-                    ],
-                }
-                for db in tree.values()
-            ],
-        }
+        databases = [
+            {
+                **db,
+                "schemas": [
+                    {**schema, "relations": list(schema["relations"].values())} for schema in db["schemas"].values()
+                ],
+            }
+            for db in tree.values()
+        ]
+        return {**current, "databases": databases + temp_db}

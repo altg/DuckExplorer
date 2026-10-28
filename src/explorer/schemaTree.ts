@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { KernelClient } from '../kernel/kernelProcess';
 import { ColumnNode, DatabaseNode, RelationNode, SchemaNode, SchemaTree } from '../kernel/protocol';
+import { quoteIdentifier } from '../sql/identifiers';
 
 export type TreeNode =
   | { kind: 'database'; db: DatabaseNode; current: boolean }
@@ -192,19 +193,6 @@ function columnIcon(type: string): string {
   if (/^BOOL/.test(t)) return 'symbol-boolean';
   if (/DATE|TIME|INTERVAL/.test(t)) return 'calendar';
   return 'symbol-field';
-}
-
-const SIMPLE_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
-const RESERVED = new Set([
-  'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc', 'both', 'case', 'cast', 'check', 'collate',
-  'column', 'constraint', 'create', 'default', 'desc', 'distinct', 'do', 'else', 'end', 'except', 'false', 'for',
-  'foreign', 'from', 'grant', 'group', 'having', 'in', 'into', 'is', 'join', 'limit', 'not', 'null', 'offset', 'on',
-  'only', 'or', 'order', 'pivot', 'primary', 'references', 'select', 'table', 'then', 'to', 'true', 'union',
-  'unique', 'unpivot', 'user', 'using', 'when', 'where', 'window', 'with',
-]);
-
-export function quoteIdentifier(name: string): string {
-  return SIMPLE_IDENTIFIER.test(name) && !RESERVED.has(name) ? name : `"${name.replace(/"/g, '""')}"`;
 }
 
 /** Shortest name that resolves to the relation: drops the default database and the main schema. */

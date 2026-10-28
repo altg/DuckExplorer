@@ -170,7 +170,8 @@ function showsResult(cell: vscode.NotebookCell, resultId: string): boolean {
   );
 }
 
-function notebookDirectory(uri: vscode.Uri): string | undefined {
+/** The folder a notebook's cells run in: relative paths in them resolve against it. */
+export function notebookDirectory(uri: vscode.Uri): string | undefined {
   if (uri.scheme === 'file') {
     return path.dirname(uri.fsPath);
   }

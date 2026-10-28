@@ -34,6 +34,7 @@ export class KernelClient implements vscode.Disposable {
   private nextId = 1;
   private busyCount = 0;
   private disposed = false;
+  private failed = false;
   private readonly statusItem = vscode.window.createStatusBarItem('duckexplorer.kernel', vscode.StatusBarAlignment.Left, 50);
   private readonly startedEmitter = new vscode.EventEmitter<KernelInfo>();
   /** Fires after each (re)start, once the kernel is ready; listeners restore attached databases. */
@@ -55,6 +56,11 @@ export class KernelClient implements vscode.Disposable {
 
   get kernelInfo(): KernelInfo | undefined {
     return this.info;
+  }
+
+  /** The last start failed (and was reported); background features shouldn't retry it on their own. */
+  get startFailed(): boolean {
+    return this.failed;
   }
 
   ensureStarted(): Promise<KernelInfo> {
@@ -210,6 +216,7 @@ export class KernelClient implements vscode.Disposable {
         throw new Error('Kernel was restarted');
       }
       this.info = info;
+      this.failed = false;
       this.log.info(
         `Kernel ready: Python ${info.python}, duckdb ${info.duckdb}, pyarrow ${info.pyarrow}, ` +
           `pandas ${info.pandas ?? '-'}, matplotlib ${info.matplotlib ?? '-'}, plotly ${info.plotly ?? '-'}`,
@@ -223,6 +230,7 @@ export class KernelClient implements vscode.Disposable {
         throw err; // stopped or restarted while starting: nothing to report
       }
       this.proc = undefined;
+      this.failed = true;
       proc.kill();
       this.updateStatus();
       this.log.error(`Kernel failed to start: ${String(err)}`);

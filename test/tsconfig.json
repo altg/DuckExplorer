@@ -10,5 +10,6 @@
     "rootDir": ".",
     "outDir": "../out-test"
   },
-  "include": ["./**/*.ts"]
+  "include": ["./**/*.ts"],
+  "exclude": ["unit/**"]
 }

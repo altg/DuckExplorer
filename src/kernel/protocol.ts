@@ -85,7 +85,58 @@ export interface DatabaseNode {
 
 export interface SchemaTree {
   current: string;
+  /** The current database's default schema (USE db.schema); unqualified names resolve there, then in main. */
+  currentSchema: string;
   databases: DatabaseNode[];
+}
+
+// SQL completions (python/duckexplorer_kernel/catalog.py).
+
+export interface FunctionParam {
+  /** Empty for unnamed parameters. */
+  name: string;
+  type?: string;
+}
+
+export interface FunctionSignature {
+  params: FunctionParam[];
+  /** Table functions: their `name := value` parameters. */
+  named?: FunctionParam[];
+  returns?: string;
+  /** The type of any further arguments. */
+  varargs?: string;
+}
+
+export interface FunctionInfo {
+  name: string;
+  kind: 'scalar' | 'aggregate' | 'macro' | 'table';
+  signatures: FunctionSignature[];
+  description?: string;
+  example?: string;
+  /** A user's macro: where it was created. */
+  database?: string;
+  schema?: string;
+}
+
+export interface FunctionCatalog {
+  /** Changes when an extension is loaded or a macro created or dropped. */
+  version: string;
+  functions: FunctionInfo[];
+  types: string[];
+}
+
+/** A Python variable that SQL cells can scan by name: a DataFrame, Arrow table or relation. */
+export interface FrameInfo {
+  name: string;
+  columns: ColumnInfo[];
+}
+
+export interface SqlCatalogResult {
+  /** Includes the `temp` database. */
+  schema: SchemaTree;
+  frames: FrameInfo[];
+  /** Left out when the caller's functionsVersion is current. */
+  functions?: FunctionCatalog;
 }
 
 export interface SortSpec {

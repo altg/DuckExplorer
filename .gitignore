@@ -1,6 +1,7 @@
 node_modules/
 dist/
 out-test/
+out-unit/
 .vscode-test/
 *.vsix
 __pycache__/

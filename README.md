@@ -31,6 +31,12 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
     distinct count, and min/max/mean, for the rows the filter keeps. Click a histogram bar or a
     value to filter to it (bars re-bin, so you can drill in), or elsewhere on a column's line to
     jump to that column in the rows.
+  - **SQL completions**: table and view names after `FROM` and `JOIN` (from every attached
+    database, plus the notebook's DataFrames), the columns of the tables the query reads (`o.`
+    lists the columns of the table aliased `o`, and CTEs and subqueries count too), struct
+    fields, DuckDB's functions, types after `::`, and file names in `FROM '…'` or
+    `read_parquet('…')`, relative to the notebook's folder. Typing a function's arguments shows
+    its parameters, and `read_csv('…', ` lists its named options. Keywords follow the cell's case.
   - Every SQL result is available in Python as a pandas DataFrame named `df`. Start a SQL cell
     with `-- name: sales` to also keep it as `sales`.
   - SQL cells can query DataFrames created in Python cells by name.
@@ -98,8 +104,8 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 - One kernel process owns the DuckDB connection, so SQL and Python share one session, and
   DuckDB's one-writer file lock is never contended between them.
 - Result pages are rendered with DuckDB's own `VARCHAR` casts, so values look exactly as in the
-  DuckDB CLI. Page, sort, filter, column-statistics, schema and table-summary requests run on a
-  second cursor, so they don't wait behind a running cell.
+  DuckDB CLI. Page, sort, filter, column-statistics, schema, completion and table-summary
+  requests run on a second cursor, so they don't wait behind a running cell.
 - A table summary loads the relation (or a 1,000,000-row reservoir sample) as a stored result,
   like a query's, so the summary panel reuses the notebook grid and Column Explorer. The panel
   is a webview that sends the grid's requests through the extension to the kernel.
@@ -114,11 +120,19 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
   become ranges. Integer and DATE bars are exact; a DOUBLE or timestamp value right on a bar's
   edge can land on the other side in SQL, and the grid says so when the row count changes.
   The new cell reruns only the cell's last statement, as a subquery.
+- Completions read the cell's SQL with a tokenizer rather than a parser, so half-typed SQL
+  still works. They find the query's `FROM` clause (before or after the cursor), its aliases,
+  CTEs and subqueries, and look the names up in a catalog the kernel sends: the schema
+  (including temporary tables, which only the main connection can see, so the kernel records
+  them after each cell), the notebook's DataFrames, and `duckdb_functions()`. The catalog is
+  reloaded at the next completion after a cell runs. The function list (about 900 functions) is
+  sent again only when it changes (`LOAD`, `CREATE MACRO`).
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view, summary panel),
-`src/notebook` (serializer, controller, grid requests), `src/renderer` (grid, filter bar and
+`src/notebook` (serializer, controller, grid requests), `src/sql` (SQL tokenizer, cursor
+context, completions and parameter hints), `src/renderer` (grid, filter bar and
 menus, Column Explorer, Plotly, the summary panel's page), `python/duckexplorer_kernel` (kernel),
 `samples` (demo database builder + notebook).
 
@@ -126,14 +140,15 @@ menus, Column Explorer, Plotly, the summary panel's page), `python/duckexplorer_
 
 ```bash
 npm run test:python   # kernel: pytest
+npm run test:unit     # SQL completion context: mocha, without VS Code
 npm test              # VS Code integration test (downloads a test build of VS Code once)
 ```
 
 ## Roadmap
 
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
-  grid (with Edit as SQL and New cell), table summary on click. Next: schema-aware SQL
-  autocomplete, running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop
-  data files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
+  grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions.
+  Next: running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop data
+  files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

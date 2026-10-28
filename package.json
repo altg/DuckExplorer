@@ -231,6 +231,7 @@
     "compile-tests": "tsc -p test",
     "pretest": "npm run compile && npm run compile-tests",
     "test": "node out-test/runTest.js",
+    "test:unit": "tsc -p test/unit && mocha --ui tdd out-unit/test/unit/*.test.js",
     "test:python": "python -m pytest python/tests -q"
   },
   "dependencies": {

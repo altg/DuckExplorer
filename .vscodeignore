@@ -3,6 +3,7 @@
 src/**
 test/**
 out-test/**
+out-unit/**
 samples/**
 scripts/**
 python/tests/**

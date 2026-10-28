@@ -197,6 +197,65 @@ suite('DuckExplorer notebook', () => {
     );
   });
 
+  test('SQL cells complete tables, columns, DataFrames and functions, and show parameter hints', async () => {
+    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const { alias } = await api.kernel.request('attach', { path: path.join(SAMPLES, 'demo.duckdb'), readOnly: true });
+    await api.kernel.request('executeSql', { notebook: 'completion-test', code: `USE ${alias}` });
+    api.catalog.invalidate();
+
+    // `|` marks where completions are asked for.
+    const probes = [
+      'SELECT * FROM |',
+      'SELECT o.| FROM orders o JOIN customers c USING (customer_id)',
+      'SELECT | FROM orders o JOIN customers c USING (customer_id)',
+      'SELECT t.| FROM targets t',
+      'WITH m AS (SELECT order_id, status AS state FROM orders) SELECT m.| FROM m',
+      "SELECT date_diff('day', order_date, |) FROM orders",
+    ];
+    const notebook = await vscode.workspace.openNotebookDocument(
+      'duckexplorer-notebook',
+      new vscode.NotebookData([
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, "import pandas as pd\ntargets = pd.DataFrame({'category': ['x'], 'goal': [1]})", 'python'),
+        ...probes.map((probe) => new vscode.NotebookCellData(vscode.NotebookCellKind.Code, probe.replace('|', ''), 'sql')),
+      ]),
+    );
+    await vscode.window.showNotebookDocument(notebook);
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+    await waitFor(() => notebook.cellAt(0).executionSummary?.success !== undefined, 60_000, 'the Python cell to finish');
+
+    const where = (i: number) => notebook.cellAt(i + 1).document.positionAt(probes[i].indexOf('|'));
+    const labels = async (i: number) => {
+      const list = await vscode.commands.executeCommand<vscode.CompletionList>(
+        'vscode.executeCompletionItemProvider',
+        notebook.cellAt(i + 1).document.uri,
+        where(i),
+      );
+      return list.items.map((item) => (typeof item.label === 'string' ? item.label : item.label.label));
+    };
+
+    const tables = await labels(0);
+    for (const name of ['orders', 'customers', 'order_totals', 'targets', 'read_csv']) {
+      assert.ok(tables.includes(name), `${name} in ${tables.slice(0, 40)}`);
+    }
+    assert.deepStrictEqual(await labels(1), ['order_id', 'customer_id', 'order_date', 'status', 'channel']);
+    const columns = await labels(2);
+    for (const name of ['status', 'country', 'segment', 'o', 'c', 'date_trunc', 'WHERE']) {
+      assert.ok(columns.includes(name), `${name} in ${columns.slice(0, 40)}`);
+    }
+    assert.ok(!columns.includes('goal'));
+    assert.deepStrictEqual(await labels(3), ['category', 'goal']);
+    assert.deepStrictEqual(await labels(4), ['order_id', 'state']);
+
+    const help = await vscode.commands.executeCommand<vscode.SignatureHelp>(
+      'vscode.executeSignatureHelpProvider',
+      notebook.cellAt(6).document.uri,
+      where(5),
+    );
+    const active = help.signatures[help.activeSignature];
+    assert.match(active.label, /^date_diff\(part VARCHAR, startdate \w+, enddate \w+\) → BIGINT$/);
+    assert.strictEqual(help.activeParameter, 2);
+  });
+
   test('clicking a table in the tree opens its summary', async () => {
     const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(workDir, 'summary.duckdb') });

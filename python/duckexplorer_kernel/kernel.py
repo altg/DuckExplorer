@@ -18,7 +18,7 @@ from typing import Any, Iterator
 import duckdb
 import pyarrow as pa
 
-from . import pyexec
+from . import catalog, pyexec
 from .results import ResultStore, StoredResult
 from .session import Session, quote_ident
 
@@ -229,6 +229,19 @@ class Kernel:
         if sample:
             extra["sampledFrom"] = count
         return self.results.describe(stored, self.page_size, **extra)
+
+    def sql_catalog(self, notebook: str | None = None, functions_version: str | None = None) -> dict:
+        """Names for SQL completions: the schema (with temp tables), the notebook's DataFrames, and the
+        function catalog unless the caller's copy (functions_version) is still current."""
+        result: dict[str, Any] = {"schema": self.session.schema(include_temp=True), "frames": []}
+        state = self.notebooks.get(notebook) if notebook else None
+        with self.session.side_lock:
+            side = self.session.side
+            if state is not None:
+                result["frames"] = catalog.notebook_frames(state.namespace, side)
+            if functions_version is None or functions_version != catalog.functions_version(side):
+                result["functions"] = catalog.function_catalog(side)
+        return result
 
     def filter_sql(self, result_id: str, filter_spec: dict | None) -> dict:
         return {"where": self.results.filter_sql(result_id, filter_spec)}

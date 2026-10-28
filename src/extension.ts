@@ -1,19 +1,23 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { AttachedDatabases, qualifiedName, quoteIdentifier, SchemaTreeProvider, TreeNode } from './explorer/schemaTree';
+import { AttachedDatabases, qualifiedName, SchemaTreeProvider, TreeNode } from './explorer/schemaTree';
 import { TableSummaryPanel } from './explorer/summaryPanel';
 import { KernelClient } from './kernel/kernelProcess';
 import { NOTEBOOK_TYPE } from './kernel/protocol';
 import { DuckbookController } from './notebook/controller';
 import { openNotebookWith, runInNotebook } from './notebook/insert';
 import { DuckbookSerializer } from './notebook/serializer';
+import { SqlCatalog } from './sql/catalog';
+import { SqlLanguageFeatures, TRIGGER_CHARACTERS } from './sql/completion';
+import { quoteIdentifier } from './sql/identifiers';
 
-/** Returned from activate() so integration tests can reach the kernel, tree, controller and summary. */
+/** Returned from activate() so integration tests can reach the kernel, tree, controller, summary and catalog. */
 export interface DuckExplorerApi {
   kernel: KernelClient;
   tree: SchemaTreeProvider;
   controller: DuckbookController;
   summary: TableSummaryPanel;
+  catalog: SqlCatalog;
 }
 
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
@@ -21,14 +25,29 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   const kernel = new KernelClient(context.extensionPath, log, kernelSettings);
   const attached = new AttachedDatabases(context.workspaceState);
   const tree = new SchemaTreeProvider(kernel, attached);
-  const controller = new DuckbookController(kernel, () => tree.scheduleRefresh());
+  const catalog = new SqlCatalog(kernel, log);
+  // After anything that may add or drop tables, functions or DataFrames.
+  const refreshNames = (soon = false) => {
+    catalog.invalidate();
+    if (soon) {
+      tree.scheduleRefresh();
+    } else {
+      tree.refresh();
+    }
+  };
+  const controller = new DuckbookController(kernel, () => refreshNames(true));
   const summary = new TableSummaryPanel(context.extensionUri, kernel);
+  const sql = new SqlLanguageFeatures(catalog);
+  const sqlCells: vscode.DocumentSelector = { notebookType: NOTEBOOK_TYPE, language: 'sql' };
 
   context.subscriptions.push(
     log,
     kernel,
     controller,
     summary,
+    catalog,
+    vscode.languages.registerCompletionItemProvider(sqlCells, sql, ...TRIGGER_CHARACTERS),
+    vscode.languages.registerSignatureHelpProvider(sqlCells, sql, { triggerCharacters: ['(', ','], retriggerCharacters: [','] }),
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new DuckbookSerializer(), DuckbookSerializer.options),
     vscode.window.registerTreeDataProvider('duckexplorer.schema', tree),
 
@@ -41,7 +60,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
           void vscode.window.showWarningMessage(`DuckExplorer: could not re-attach ${path.basename(db.path)}: ${(err as Error).message}`);
         }
       }
-      tree.refresh();
+      refreshNames();
       summary.reload();
     }),
     vscode.window.onDidChangeActiveColorTheme(() => kernel.reconfigure()),
@@ -56,7 +75,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
       }
     }),
 
-    vscode.commands.registerCommand('duckexplorer.addDatabase', () => addDatabase(kernel, attached, tree)),
+    vscode.commands.registerCommand('duckexplorer.addDatabase', () => addDatabase(kernel, attached, refreshNames)),
     vscode.commands.registerCommand('duckexplorer.detachDatabase', async (node?: TreeNode) => {
       if (node?.kind !== 'database' || !node.db.path) {
         return;
@@ -67,9 +86,9 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
       } catch (err) {
         void vscode.window.showErrorMessage(`DuckExplorer: ${(err as Error).message}`);
       }
-      tree.refresh();
+      refreshNames();
     }),
-    vscode.commands.registerCommand('duckexplorer.refresh', () => tree.refresh()),
+    vscode.commands.registerCommand('duckexplorer.refresh', () => refreshNames()),
     vscode.commands.registerCommand('duckexplorer.newNotebook', () =>
       openNotebookWith('-- Attach databases from the DuckExplorer view, then query them here.\nSELECT 42 AS answer;'),
     ),
@@ -116,7 +135,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     }),
     vscode.commands.registerCommand('duckexplorer.showLog', () => log.show()),
   );
-  return { kernel, tree, controller, summary };
+  return { kernel, tree, controller, summary, catalog };
 }
 
 export function deactivate(): void {
@@ -133,7 +152,7 @@ function kernelSettings(): Record<string, unknown> {
   };
 }
 
-async function addDatabase(kernel: KernelClient, attached: AttachedDatabases, tree: SchemaTreeProvider): Promise<void> {
+async function addDatabase(kernel: KernelClient, attached: AttachedDatabases, refreshNames: () => void): Promise<void> {
   type Choice = vscode.QuickPickItem & { action: 'open' | 'readonly' | 'create' };
   const choice = await vscode.window.showQuickPick<Choice>(
     [
@@ -172,5 +191,5 @@ async function addDatabase(kernel: KernelClient, attached: AttachedDatabases, tr
       void vscode.window.showErrorMessage(`DuckExplorer: could not attach ${path.basename(uri.fsPath)}: ${message}${hint}`);
     }
   }
-  tree.refresh();
+  refreshNames();
 }
