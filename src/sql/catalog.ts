@@ -49,8 +49,14 @@ export class SqlCatalog implements vscode.Disposable {
     this.fresh.clear();
   }
 
-  /** Names for completions in `notebook`; undefined while the kernel has never answered. */
-  async snapshot(notebook: string | undefined): Promise<CatalogSnapshot | undefined> {
+  /**
+   * Names for completions in `notebook`; undefined while the kernel has never answered. Without
+   * `startKernel` (a .sql file, which may not be DuckDB's at all), only a running kernel is asked.
+   */
+  async snapshot(notebook: string | undefined, startKernel = true): Promise<CatalogSnapshot | undefined> {
+    if (!startKernel && !this.kernel.isRunning) {
+      return undefined;
+    }
     const key = notebook ?? '';
     if (!this.fresh.has(key)) {
       const load = this.loading.get(key) ?? this.load(key);

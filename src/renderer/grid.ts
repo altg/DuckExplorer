@@ -1,9 +1,9 @@
 import type { Cell, FilterCondition, FilterSpec, SortSpec, TableResult } from '../kernel/protocol';
 import type { HostClient } from './client';
 import { ColumnExplorer } from './columns';
-import { describeCondition, FilterBar, withCondition, withoutColumn, withWhere } from './filters';
+import { describeCondition, FilterBar, type QueryLink, withCondition, withoutColumn, withWhere } from './filters';
 import { ContextMenu, type MenuEntry } from './menu';
-import { el, shortType } from './util';
+import { el, formatDuration, shortType } from './util';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ROW_HEIGHT = 24;
@@ -31,6 +31,8 @@ export interface GridOptions {
   maxHeight?: number;
   /** Offer "New cell" in the filter bar (default: for results of SQL cells, which bind to Python names). */
   queryCell?: boolean;
+  /** "New cell" under another name, where the query goes somewhere else than a notebook cell. */
+  queryLink?: QueryLink;
 }
 
 export class ResultGrid {
@@ -111,7 +113,7 @@ export class ResultGrid {
           toggled: () => this.renderFooter(),
           editAsSql: () => void this.editAsSql(),
           newCell: (options.queryCell ?? result.boundTo !== undefined) ? () => void this.newCell() : undefined,
-        });
+        }, options.queryLink);
         root.prepend(this.filterBar.element);
       }
       this.explorer = new ColumnExplorer(
@@ -503,7 +505,7 @@ export class ResultGrid {
     const response = await this.client.insertFilteredCell(this.result.id, this.filter, this.sort);
     if (this.signal.aborted || response.result) return;
     if (response.error === 'expired') this.markExpired();
-    else this.filterBar?.setMessage(`Could not add the cell: ${response.error}`);
+    else this.filterBar?.setMessage(`Could not add the query: ${response.error}`);
   }
 
   private commitView(sort: SortSpec | undefined, filter: FilterSpec | undefined, total: number, firstPage: Cell[][]): void {
@@ -817,12 +819,6 @@ function estimateWidth(name: string, type: string, rows: Cell[][], col: number):
     chars = Math.max(chars, value === null ? 4 : Math.min(value.length, 60));
   }
   return Math.round(Math.min(360, Math.max(64, chars * 7.4 + 20)));
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1) return '<1 ms';
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`;
 }
 
 function clamp(value: number, min: number, max: number): number {

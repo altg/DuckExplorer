@@ -51,6 +51,7 @@ class Server:
             "summarize": lambda p: k.summarize(p["database"], p["schema"], p["name"]),
             "executeSql": lambda p: k.execute_sql(p["notebook"], p["code"], p.get("cwd")),
             "executePython": lambda p: k.execute_python(p["notebook"], p["code"], p.get("cwd")),
+            "runStatements": lambda p: k.run_statements(p["statements"], p.get("cwd")),
             "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"], p.get("sort"), p.get("filter")),
             "profileResult": lambda p: k.profile_result(p["resultId"], p.get("filter")),
             "filterSql": lambda p: k.filter_sql(p["resultId"], p.get("filter")),

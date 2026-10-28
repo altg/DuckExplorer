@@ -1,0 +1,69 @@
+/* The results view of .sql files, around the results grid (styles.css). */
+
+body {
+  margin: 0;
+  padding: 6px 16px 8px;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.dx-run-head {
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 24px;
+  margin-bottom: 6px;
+}
+
+.dx-run-source {
+  flex: none;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+}
+
+.dx-run-sql {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dx-run-status {
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-run-status.dx-error {
+  color: var(--vscode-errorForeground);
+}
+
+.dx-run-head .dx-button {
+  flex: none;
+  padding: 1px 10px;
+}
+
+.dx-run-body.dx-stale {
+  opacity: 0.5;
+}
+
+.dx-run-empty {
+  padding: 8px 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-run-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--vscode-errorForeground);
+  background: var(--vscode-inputValidation-errorBackground, transparent);
+  color: var(--vscode-errorForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -46,6 +46,30 @@ export interface ExecuteResult {
   error: KernelError | null;
 }
 
+/** The statements of a .sql file, run in order until one fails (python/duckexplorer_kernel/script.py). */
+export interface StatementsResult {
+  /** How many statements ran without error. */
+  completed: number;
+  elapsedMs: number;
+  /** The last statement's rows. */
+  table?: TableResult;
+  /** What the last statement did, when it returns no rows ("3 rows inserted"); '' when there is nothing to say. */
+  message?: string;
+  error?: StatementError;
+}
+
+export interface StatementError {
+  ename: string;
+  /** DuckDB's message, with its excerpt of the line in error. */
+  evalue: string;
+  /** The message without the excerpt. */
+  message: string;
+  /** Index of the statement that failed. */
+  statement: number;
+  /** Where in that statement, as an offset in its text. */
+  position?: number;
+}
+
 export interface KernelInfo {
   python: string;
   executable: string;
@@ -249,6 +273,26 @@ export type SummaryMessage =
   | { type: 'error'; relation: SummaryRelation; message: string };
 
 export type SummaryAction = { type: 'ready' } | { type: 'preview' } | { type: 'refresh' };
+
+// The results view of .sql files (src/sql/resultsView.ts <-> src/renderer/results.ts). Its grid
+// also sends RendererRequests and receives RendererResponses.
+
+/** What a run of a .sql file ran. */
+export interface RunSource {
+  /** The file's name and the line of the first statement, e.g. "orders.sql:12". */
+  label: string;
+  /** The statements, for the header (shortened there). */
+  sql: string;
+  statements: number;
+}
+
+export type ResultsMessage =
+  | { type: 'running'; source: RunSource }
+  | { type: 'result'; source: RunSource; result: StatementsResult }
+  /** The kernel couldn't run the statements (it failed to start, or stopped). */
+  | { type: 'failed'; source: RunSource; message: string };
+
+export type ResultsAction = { type: 'ready' } | { type: 'cancel' } | { type: 'reveal' };
 
 export interface RendererResponse {
   type: 'response';

@@ -15,3 +15,9 @@ export function shortType(type: string): string {
   if (t.startsWith('TIMESTAMP WITH TIME ZONE')) return 'TIMESTAMPTZ';
   return t.replace(/\(.*\)$/, '');
 }
+
+export function formatDuration(ms: number): string {
+  if (ms < 1) return '<1 ms';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`;
+}

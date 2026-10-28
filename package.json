@@ -16,7 +16,8 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onNotebook:duckexplorer-notebook",
-    "onView:duckexplorer.schema"
+    "onView:duckexplorer.schema",
+    "onLanguage:sql"
   ],
   "contributes": {
     "notebooks": [
@@ -49,6 +50,13 @@
           "title": "DuckExplorer",
           "icon": "media/duck.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "duckexplorer-results",
+          "title": "DuckDB Results",
+          "icon": "media/duck.svg"
+        }
       ]
     },
     "views": {
@@ -56,6 +64,13 @@
         {
           "id": "duckexplorer.schema",
           "name": "Databases"
+        }
+      ],
+      "duckexplorer-results": [
+        {
+          "type": "webview",
+          "id": "duckexplorer.results",
+          "name": "Results"
         }
       ]
     },
@@ -83,6 +98,18 @@
         "title": "Refresh",
         "category": "DuckExplorer",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "duckexplorer.runStatement",
+        "title": "Run Statement",
+        "category": "DuckExplorer",
+        "icon": "$(play)"
+      },
+      {
+        "command": "duckexplorer.runFile",
+        "title": "Run File",
+        "category": "DuckExplorer",
+        "icon": "$(run-all)"
       },
       {
         "command": "duckexplorer.newNotebook",
@@ -196,9 +223,62 @@
         {
           "command": "duckexplorer.detachDatabase",
           "when": "false"
+        },
+        {
+          "command": "duckexplorer.runStatement",
+          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+        },
+        {
+          "command": "duckexplorer.runFile",
+          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+        }
+      ],
+      "editor/title/run": [
+        {
+          "command": "duckexplorer.runFile",
+          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles",
+          "group": "navigation@1"
+        },
+        {
+          "command": "duckexplorer.runStatement",
+          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "duckexplorer.runStatement",
+          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles",
+          "group": "duckexplorer@1"
+        },
+        {
+          "command": "duckexplorer.runFile",
+          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles",
+          "group": "duckexplorer@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "duckexplorer.runFile",
+          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles",
+          "group": "duckexplorer@1"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "duckexplorer.runStatement",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+      },
+      {
+        "command": "duckexplorer.runFile",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorTextFocus && editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+      }
+    ],
     "configuration": {
       "title": "DuckExplorer",
       "properties": {
@@ -219,6 +299,11 @@
           "default": 1000000,
           "minimum": 0,
           "description": "Maximum rows copied into the pandas DataFrame (`df` and named results) after each SQL cell. 0 disables the DataFrame copy."
+        },
+        "duckexplorer.sqlFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run .sql files with DuckDB: a Run button above each statement and in the editor title, Ctrl+Enter (the statement at the cursor or the selection) and Ctrl+Shift+Enter (the file), and completions while the kernel runs."
         }
       }
     }

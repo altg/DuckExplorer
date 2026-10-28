@@ -1,8 +1,7 @@
-import { randomBytes } from 'crypto';
 import * as vscode from 'vscode';
 import { KernelClient } from '../kernel/kernelProcess';
 import { SummaryAction, SummaryMessage, SummaryRelation, TableResult } from '../kernel/protocol';
-import { answerGridRequest, InsertFilteredCell, isGridRequest } from '../notebook/gridRequests';
+import { answerGridRequest, gridWebviewHtml, InsertFilteredCell, isGridRequest } from '../notebook/gridRequests';
 import { runInNotebook } from '../notebook/insert';
 
 /**
@@ -59,7 +58,7 @@ export class TableSummaryPanel implements vscode.Disposable {
     );
     panel.iconPath = vscode.Uri.joinPath(this.extensionUri, 'media', 'duck.svg');
     this.ready = false;
-    panel.webview.html = summaryHtml(panel.webview, vscode.Uri.joinPath(dist, 'summary.js'));
+    panel.webview.html = gridWebviewHtml(panel.webview, vscode.Uri.joinPath(dist, 'summary.js'), 'Summary');
     panel.webview.onDidReceiveMessage((message) => this.onMessage(message));
     panel.onDidDispose(() => {
       this.panel = undefined;
@@ -122,27 +121,4 @@ export class TableSummaryPanel implements vscode.Disposable {
     await runInNotebook(code);
     return {};
   }
-}
-
-function summaryHtml(webview: vscode.Webview, script: vscode.Uri): string {
-  const nonce = randomBytes(16).toString('base64');
-  // Styles are injected by the script (the grid's stylesheet) and set on elements, so they are inline.
-  const csp = [
-    "default-src 'none'",
-    `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src 'nonce-${nonce}'`,
-    `img-src ${webview.cspSource} data:`,
-  ].join('; ');
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="${csp}">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Summary</title>
-</head>
-<body>
-<script nonce="${nonce}" src="${webview.asWebviewUri(script)}"></script>
-</body>
-</html>`;
 }

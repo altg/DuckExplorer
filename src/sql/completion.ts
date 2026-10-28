@@ -7,14 +7,13 @@ import {
   FrameInfo,
   FunctionInfo,
   FunctionSignature,
-  NOTEBOOK_TYPE,
   RelationNode,
   SchemaNode,
   SchemaTree,
 } from '../kernel/protocol';
-import { notebookDirectory } from '../notebook/controller';
 import { CatalogSnapshot, SqlCatalog } from './catalog';
 import { analyze, Cte, QueryShape, RelationRef, SqlContext } from './context';
+import { baseDirectory, notebookOf, sqlFilesEnabled } from './documents';
 import { quoteIdentifier, sameName } from './identifiers';
 
 export const TRIGGER_CHARACTERS = ['.', ' ', '"', "'", '/', ':'];
@@ -70,7 +69,7 @@ const FILE_FUNCTION = /^(read_\w+|parquet_\w+|sniff_csv|glob|iceberg_\w+|delta_s
 const DATA_FILE = /\.(csv|tsv|txt|parquet|json|jsonl|ndjson|xlsx|duckdb|ddb|db|arrow|feather|avro|orc|gz|zst)$/i;
 const MAX_FILES = 1000;
 
-/** SQL completions and parameter hints in DuckDB notebook cells. */
+/** SQL completions and parameter hints in DuckDB notebook cells and .sql files. */
 export class SqlLanguageFeatures implements vscode.CompletionItemProvider, vscode.SignatureHelpProvider {
   constructor(private readonly catalog: SqlCatalog) {}
 
@@ -80,6 +79,10 @@ export class SqlLanguageFeatures implements vscode.CompletionItemProvider, vscod
     token: vscode.CancellationToken,
     completion: vscode.CompletionContext,
   ): Promise<vscode.CompletionItem[] | undefined> {
+    const notebook = notebookOf(document);
+    if (!notebook && !sqlFilesEnabled()) {
+      return undefined;
+    }
     const offset = document.offsetAt(position);
     const ctx = analyze(document.getText(), offset);
     if (!wanted(ctx, completion)) {
@@ -92,7 +95,7 @@ export class SqlLanguageFeatures implements vscode.CompletionItemProvider, vscod
     if (ctx.position.kind === 'path') {
       return fileItems(baseDirectory(document), ctx.position.typed, ctx.prefix, range);
     }
-    const snapshot = await this.catalog.snapshot(notebookOf(document)?.uri.toString());
+    const snapshot = await this.catalog.snapshot(notebook?.uri.toString(), notebook !== undefined);
     if (token.isCancellationRequested) {
       return undefined;
     }
@@ -108,11 +111,15 @@ export class SqlLanguageFeatures implements vscode.CompletionItemProvider, vscod
   }
 
   async provideSignatureHelp(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.SignatureHelp | undefined> {
+    const notebook = notebookOf(document);
+    if (!notebook && !sqlFilesEnabled()) {
+      return undefined;
+    }
     const { call } = analyze(document.getText(), document.offsetAt(position));
     if (!call) {
       return undefined;
     }
-    const snapshot = await this.catalog.snapshot(notebookOf(document)?.uri.toString());
+    const snapshot = await this.catalog.snapshot(notebook?.uri.toString(), notebook !== undefined);
     const functions = lookupFunctions(snapshot, call.name);
     if (!functions.length) {
       return undefined;
@@ -721,19 +728,4 @@ async function fileItems(
     items.push(item);
   }
   return items;
-}
-
-function notebookOf(document: vscode.TextDocument): vscode.NotebookDocument | undefined {
-  return vscode.workspace.notebookDocuments.find(
-    (notebook) => notebook.notebookType === NOTEBOOK_TYPE && notebook.getCells().some((cell) => cell.document === document),
-  );
-}
-
-/** Relative file names in SQL resolve against the notebook's folder (the kernel runs cells there). */
-function baseDirectory(document: vscode.TextDocument): string | undefined {
-  const notebook = notebookOf(document);
-  if (notebook) {
-    return notebookDirectory(notebook.uri);
-  }
-  return document.uri.scheme === 'file' ? path.dirname(document.uri.fsPath) : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }

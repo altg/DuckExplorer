@@ -1,36 +1,19 @@
 // The table summary panel's webview (src/explorer/summaryPanel.ts): the relation's name and kind,
-// and the results grid opened on its Column Explorer. Grid requests reach the kernel through the
-// panel, as they do from notebook outputs through renderer messaging.
-import type { RendererContext } from 'vscode-notebook-renderer';
+// and the results grid opened on its Column Explorer.
 import type { SummaryAction, SummaryMessage, SummaryRelation } from '../kernel/protocol';
-import { HostClient } from './client';
 import { ResultGrid } from './grid';
-import css from './styles.css';
 import summaryCss from './summary.css';
 import { el } from './util';
+import { addStyles, client, onMessage, send as post } from './webview';
 
-const vscode = acquireVsCodeApi();
-const listeners = new Set<(message: unknown) => void>();
-window.addEventListener('message', (event) => listeners.forEach((listener) => listener(event.data)));
-const context = {
-  postMessage: (message: unknown) => vscode.postMessage(message),
-  onDidReceiveMessage: (listener: (message: unknown) => void) => {
-    listeners.add(listener);
-    return { dispose: () => listeners.delete(listener) };
-  },
-} as unknown as RendererContext<unknown>;
-const client = new HostClient(context);
-
-const style = document.createElement('style');
-style.textContent = css + summaryCss;
-document.head.append(style);
+addStyles(summaryCss);
 const header = el('header', 'dx-summary-head');
 const main = el('main', 'dx-summary-body');
 document.body.append(header, main);
 
 let shown: { controller: AbortController; grid?: ResultGrid } | undefined;
 
-listeners.add((data) => {
+onMessage((data) => {
   const message = data as SummaryMessage;
   if (message?.type !== 'loading' && message?.type !== 'summary' && message?.type !== 'error') return;
   shown?.controller.abort();
@@ -82,5 +65,5 @@ function availableHeight(): number {
 }
 
 function send(action: SummaryAction): void {
-  vscode.postMessage(action);
+  post(action);
 }

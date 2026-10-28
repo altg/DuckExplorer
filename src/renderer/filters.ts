@@ -74,6 +74,14 @@ export interface FilterBarHandlers {
   newCell?(): void;
 }
 
+/** The filter bar's link that reruns the query filtered, and its tooltip. */
+export interface QueryLink {
+  label: string;
+  title: string;
+}
+
+const NEW_CELL: QueryLink = { label: 'New cell', title: 'Add a SQL cell with this query, filtered and sorted like the grid, and run it' };
+
 /**
  * The filter above a result: a chip per condition (added from the cell and header menus or the
  * Column Explorer) and a WHERE box for any SQL condition on the result's columns. Changes go to
@@ -86,7 +94,7 @@ export class FilterBar {
   /** Grows with its text, so a long condition (e.g. from "Edit as SQL") stays readable. */
   private readonly input = el('textarea', 'dx-where-input');
   private readonly editAsSql = el('button', 'dx-link', 'Edit as SQL');
-  private readonly newCell = el('button', 'dx-link', 'New cell');
+  private readonly newCell = el('button', 'dx-link');
   private readonly clear = el('button', 'dx-link', 'Clear all');
   private readonly message = el('div', 'dx-filter-error');
   private filter: FilterSpec | undefined;
@@ -95,6 +103,7 @@ export class FilterBar {
   constructor(
     private readonly columns: ColumnInfo[],
     private readonly handlers: FilterBarHandlers,
+    queryLink: QueryLink = NEW_CELL,
   ) {
     this.input.rows = 1;
     this.input.spellcheck = false;
@@ -108,7 +117,8 @@ export class FilterBar {
     this.where.append(el('span', 'dx-where-label', 'WHERE'), this.input);
     this.editAsSql.title = 'Replace the filter chips with the same condition in the WHERE box, to edit it as SQL';
     this.editAsSql.addEventListener('click', () => this.handlers.editAsSql());
-    this.newCell.title = 'Add a SQL cell with this query, filtered and sorted like the grid, and run it';
+    this.newCell.textContent = queryLink.label;
+    this.newCell.title = queryLink.title;
     this.newCell.addEventListener('click', () => this.handlers.newCell?.());
     this.clear.title = 'Remove every filter';
     this.clear.addEventListener('click', () => this.handlers.change(undefined));

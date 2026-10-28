@@ -18,7 +18,7 @@ from typing import Any, Iterator
 import duckdb
 import pyarrow as pa
 
-from . import catalog, pyexec
+from . import catalog, pyexec, script
 from .results import ResultStore, StoredResult
 from .session import Session, quote_ident
 
@@ -199,6 +199,42 @@ class Kernel:
                 except Exception as exc:
                     capture.stream("stderr", f"Could not render figure: {exc}\n")
         return {"outputs": capture.outputs, "error": error}
+
+    def run_statements(self, statements: list[str], cwd: str | None = None) -> dict:
+        """Runs the statements of a .sql file (or of the selection in one) in order on the main
+        connection, stopping at the first error. The last statement's rows come back as a stored
+        result, as a SQL cell's do; a statement without rows as a message ("3 rows inserted").
+
+        An error says which statement failed and, when DuckDB says, where in it (a UTF-16 offset).
+        """
+        reply: dict[str, Any] = {"completed": 0}
+        outcome: tuple[pa.Table, list[str]] | str = ""
+        with self._running("sql", cwd):
+            started = time.perf_counter()
+            for index, statement in enumerate(statements):
+                try:
+                    outcome = script.run(self.session.con, statement, rows=index == len(statements) - 1)
+                except (KeyboardInterrupt, duckdb.InterruptException):
+                    interrupted = _interrupted()
+                    reply["error"] = {**interrupted, "message": interrupted["evalue"], "statement": index}
+                    break
+                except Exception as exc:
+                    message, position = script.locate(statement, str(exc))
+                    error = {"ename": type(exc).__name__, "evalue": str(exc), "message": message, "statement": index}
+                    if position is not None:
+                        error["position"] = position
+                    reply["error"] = error
+                    break
+                reply["completed"] = index + 1
+            elapsed = round(_ms_since(started), 1)
+        reply["elapsedMs"] = elapsed
+        if "error" not in reply:
+            if isinstance(outcome, tuple):
+                stored = self.results.add(*outcome)
+                reply["table"] = self.results.describe(stored, self.page_size, elapsedMs=elapsed)
+            else:
+                reply["message"] = outcome
+        return reply
 
     def fetch_page(
         self, result_id: str, offset: int, limit: int, sort: dict | None = None, filter_spec: dict | None = None

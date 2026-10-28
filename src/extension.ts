@@ -10,14 +10,17 @@ import { DuckbookSerializer } from './notebook/serializer';
 import { SqlCatalog } from './sql/catalog';
 import { SqlLanguageFeatures, TRIGGER_CHARACTERS } from './sql/completion';
 import { quoteIdentifier } from './sql/identifiers';
+import { SqlResultsView } from './sql/resultsView';
+import { SqlFileRunner } from './sql/runner';
 
-/** Returned from activate() so integration tests can reach the kernel, tree, controller, summary and catalog. */
+/** Returned from activate() so integration tests can reach the kernel, tree, controller, summary, catalog and runner. */
 export interface DuckExplorerApi {
   kernel: KernelClient;
   tree: SchemaTreeProvider;
   controller: DuckbookController;
   summary: TableSummaryPanel;
   catalog: SqlCatalog;
+  runner: SqlFileRunner;
 }
 
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
@@ -37,8 +40,13 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   };
   const controller = new DuckbookController(kernel, () => refreshNames(true));
   const summary = new TableSummaryPanel(context.extensionUri, kernel);
+  const runner = new SqlFileRunner(context.extensionUri, kernel, () => refreshNames(true));
   const sql = new SqlLanguageFeatures(catalog);
-  const sqlCells: vscode.DocumentSelector = { notebookType: NOTEBOOK_TYPE, language: 'sql' };
+  const sqlFiles: vscode.DocumentFilter[] = [
+    { language: 'sql', scheme: 'file' },
+    { language: 'sql', scheme: 'untitled' },
+  ];
+  const sqlEditors: vscode.DocumentSelector = [{ notebookType: NOTEBOOK_TYPE, language: 'sql' }, ...sqlFiles];
 
   context.subscriptions.push(
     log,
@@ -46,8 +54,11 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     controller,
     summary,
     catalog,
-    vscode.languages.registerCompletionItemProvider(sqlCells, sql, ...TRIGGER_CHARACTERS),
-    vscode.languages.registerSignatureHelpProvider(sqlCells, sql, { triggerCharacters: ['(', ','], retriggerCharacters: [','] }),
+    runner,
+    vscode.languages.registerCompletionItemProvider(sqlEditors, sql, ...TRIGGER_CHARACTERS),
+    vscode.languages.registerSignatureHelpProvider(sqlEditors, sql, { triggerCharacters: ['(', ','], retriggerCharacters: [','] }),
+    vscode.languages.registerCodeLensProvider(sqlFiles, runner),
+    vscode.window.registerWebviewViewProvider(SqlResultsView.id, runner.view, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new DuckbookSerializer(), DuckbookSerializer.options),
     vscode.window.registerTreeDataProvider('duckexplorer.schema', tree),
 
@@ -89,6 +100,11 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
       refreshNames();
     }),
     vscode.commands.registerCommand('duckexplorer.refresh', () => refreshNames()),
+    // From a CodeLens: the file and the statement's offset. From the editor title: the file.
+    vscode.commands.registerCommand('duckexplorer.runStatement', (uri?: unknown, offset?: unknown) =>
+      runner.runStatement(uri instanceof vscode.Uri ? uri : undefined, typeof offset === 'number' ? offset : undefined),
+    ),
+    vscode.commands.registerCommand('duckexplorer.runFile', (uri?: unknown) => runner.runFile(uri instanceof vscode.Uri ? uri : undefined)),
     vscode.commands.registerCommand('duckexplorer.newNotebook', () =>
       openNotebookWith('-- Attach databases from the DuckExplorer view, then query them here.\nSELECT 42 AS answer;'),
     ),
@@ -135,7 +151,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     }),
     vscode.commands.registerCommand('duckexplorer.showLog', () => log.show()),
   );
-  return { kernel, tree, controller, summary, catalog };
+  return { kernel, tree, controller, summary, catalog, runner };
 }
 
 export function deactivate(): void {

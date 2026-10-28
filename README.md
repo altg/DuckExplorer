@@ -52,6 +52,16 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
   `SELECT * FROM <table> WHERE …` into the notebook. Tables over 1,000,000 rows are summarized
   from a random sample, which the panel says. **Refresh** reads the rows again.
 - **Preview Table** from the tree adds and runs `SELECT * … LIMIT 100` in the active notebook.
+- **.sql files**: **Ctrl+Enter** (or **Run** above a statement) runs the statement at the cursor,
+  or the selected statements; **Ctrl+Shift+Enter** (or the Run button in the editor title, or
+  **Run File** on a `.sql` file in the Explorer) runs the whole file, stopping at the first error.
+  The last statement's rows show in the **DuckDB Results** view in the bottom panel, with the same
+  grid as a notebook cell (sorting, filters, Column Explorer); its **Insert query** writes the
+  filtered, sorted query below the statement and runs it. Statements without rows say what they
+  did (`3 rows inserted`). An error is underlined where DuckDB says it is. Files share the session
+  with notebooks, so a temporary table made in one is visible in the other, and relative paths
+  resolve against the file's folder. Completions work as in notebook cells once the kernel is
+  running (a `.sql` file alone doesn't start it). Turn all of this off with `duckexplorer.sqlFiles`.
 
 ## Requirements
 
@@ -76,7 +86,7 @@ python samples/make_sample_db.py
 ```
 
 Then press **F5** ("Run DuckExplorer") to open an Extension Development Host on the `samples`
-folder, open `demo.duckbook` and choose **Run All**.
+folder, open `demo.duckbook` and choose **Run All**, or open `demo.sql` and press Ctrl+Shift+Enter.
 
 From a terminal, `npm run dev` builds and opens the same window without the debugger (run it
 again to rebuild and reload). It passes absolute paths: `code --extensionDevelopmentPath=.`
@@ -89,6 +99,7 @@ doesn't work, because the `code` command reads a relative path from the root of 
 | `duckexplorer.pythonPath` | empty | Interpreter for the kernel |
 | `duckexplorer.pageSize` | 200 | Rows per page in the results grid |
 | `duckexplorer.maxPandasRows` | 1,000,000 | Row cap when a SQL result is turned into a DataFrame (0 = never) |
+| `duckexplorer.sqlFiles` | true | Run buttons, Ctrl+Enter and completions in `.sql` files |
 
 ## How it works
 
@@ -127,28 +138,34 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
   them after each cell), the notebook's DataFrames, and `duckdb_functions()`. The catalog is
   reloaded at the next completion after a cell runs. The function list (about 900 functions) is
   sent again only when it changes (`LOAD`, `CREATE MACRO`).
+- A `.sql` file is split into statements with the same tokenizer, so a `;` in a string or comment
+  doesn't end one. The kernel runs them one at a time on the notebooks' connection with
+  `execute()` (the relation API that SQL cells use drops the position of binder errors) and reads
+  the position from the `LINE n: …` excerpt in DuckDB's message, counting wide characters as
+  two columns, as DuckDB does.
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view, summary panel),
 `src/notebook` (serializer, controller, grid requests), `src/sql` (SQL tokenizer, cursor
-context, completions and parameter hints), `src/renderer` (grid, filter bar and
-menus, Column Explorer, Plotly, the summary panel's page), `python/duckexplorer_kernel` (kernel),
-`samples` (demo database builder + notebook).
+context, completions and parameter hints; running `.sql` files and their results view),
+`src/renderer` (grid, filter bar and menus, Column Explorer, Plotly, the pages of the summary
+panel and results view), `python/duckexplorer_kernel` (kernel), `samples` (demo database
+builder, notebook and `.sql` file).
 
 ## Tests
 
 ```bash
 npm run test:python   # kernel: pytest
-npm run test:unit     # SQL completion context: mocha, without VS Code
+npm run test:unit     # SQL completion context and statement splitting: mocha, without VS Code
 npm test              # VS Code integration test (downloads a test build of VS Code once)
 ```
 
 ## Roadmap
 
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
-  grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions.
-  Next: running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop data
+  grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions,
+  running `.sql` files. Next: query history, export (CSV/Parquet/Excel), drag-and-drop data
   files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

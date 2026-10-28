@@ -650,3 +650,33 @@
   font-family: var(--vscode-editor-font-family, monospace);
   white-space: pre-wrap;
 }
+
+/* -- Buttons (summary panel, results view) -------------------------------------- */
+
+.dx-button {
+  padding: 4px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dx-button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.dx-button.secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.dx-button.secondary:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.dx-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}

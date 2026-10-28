@@ -1,4 +1,4 @@
-/** In the summary panel's webview (src/renderer/summary.ts). */
+/** In the webviews of the summary panel and the results view (src/renderer/webview.ts). */
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
   getState(): unknown;

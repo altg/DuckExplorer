@@ -33,10 +33,11 @@ const contexts = await Promise.all([
     chunkNames: 'chunks/[name]-[hash]',
     loader: { '.css': 'text' },
   }),
-  // Table summary panel webview: one classic script, sharing the grid with the renderer.
+  // Webviews of the table summary panel and the results view: classic scripts, sharing the grid
+  // with the renderer.
   esbuild.context({
     ...common,
-    entryPoints: { summary: 'src/renderer/summary.ts' },
+    entryPoints: { summary: 'src/renderer/summary.ts', results: 'src/renderer/results.ts' },
     outdir: 'dist',
     platform: 'browser',
     format: 'iife',
