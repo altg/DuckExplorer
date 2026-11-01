@@ -22,7 +22,7 @@ const TEMPORAL_TYPE = /^(DATE|TIME|TIMESTAMP(_S|_MS|_NS)?|TIMESTAMP WITH TIME ZO
  * Virtualized results grid: renders only the visible rows and columns and fetches further
  * pages from the kernel as the user scrolls. The kernel sorts (click a header) and filters (the
  * filter bar, cell and header menus, Column Explorer bars) the stored result; the grid pages
- * through that view. The footer switches between the rows and the Column Explorer.
+ * through that view. The footer switches between the rows and the Column Explorer, and exports the view.
  */
 export interface GridOptions {
   /** The view to open on (default: the rows). */
@@ -379,6 +379,17 @@ export class ResultGrid {
       group.append(button);
       children.push(group);
     }
+    if (this.canExport) {
+      const group = el('div', 'dx-tabs');
+      const button = el('button', 'dx-tab', 'Export');
+      button.title =
+        this.filter || this.sort
+          ? 'Save these rows, filtered and sorted as shown, to a CSV, Parquet or Excel file'
+          : 'Save the rows to a CSV, Parquet or Excel file';
+      button.addEventListener('click', () => void this.exportRows());
+      group.append(button);
+      children.push(group);
+    }
     children.push(el('span', '', parts.join(' · ')));
     if (this.pendingView) {
       children.push(el('span', 'dx-pending', this.pendingView));
@@ -508,6 +519,12 @@ export class ResultGrid {
     else this.filterBar?.setMessage(`Could not add the query: ${response.error}`);
   }
 
+  /** Asks the extension to save the view to a file: it asks which, and says how it went. */
+  private async exportRows(): Promise<void> {
+    const response = await this.client.exportResult(this.result.id, this.filter, this.sort);
+    if (!this.signal.aborted && response.error === 'expired') this.markExpired();
+  }
+
   private commitView(sort: SortSpec | undefined, filter: FilterSpec | undefined, total: number, firstPage: Cell[][]): void {
     const filterChanged = filter !== this.filter;
     this.sort = sort;
@@ -560,6 +577,10 @@ export class ResultGrid {
 
   private get canFilter(): boolean {
     return this.filterBar !== undefined && !this.expired;
+  }
+
+  private get canExport(): boolean {
+    return this.client.available && !this.expired && this.result.columns.length > 0;
   }
 
   /** Cycles a column through ascending, descending and the query's own order. */

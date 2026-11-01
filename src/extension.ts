@@ -8,6 +8,7 @@ import { HISTORY_SCHEME, QueryHistory } from './history/queryHistory';
 import { KernelClient } from './kernel/kernelProcess';
 import { NOTEBOOK_TYPE } from './kernel/protocol';
 import { DuckbookController } from './notebook/controller';
+import { ExportChoice, exportRows, ExportSource } from './notebook/export';
 import { openNotebookWith, runInNotebook } from './notebook/insert';
 import { DuckbookSerializer } from './notebook/serializer';
 import { SqlCatalog } from './sql/catalog';
@@ -139,6 +140,19 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
           comment: relation.comment,
           qualified: qualifiedName(node),
         });
+      }
+    }),
+    // Tests pass the format and file instead of choosing them.
+    vscode.commands.registerCommand('duckexplorer.exportTable', (node?: TreeNode, choice?: ExportChoice) => {
+      if (node?.kind === 'relation') {
+        const { db, schema, relation } = node;
+        const source: ExportSource = {
+          title: `Export ${relation.name}`,
+          name: relation.name,
+          method: 'exportRelation',
+          params: { database: db.name, schema: schema.name, name: relation.name },
+        };
+        return exportRows(kernel, source, choice);
       }
     }),
     vscode.commands.registerCommand('duckexplorer.copyName', (node?: TreeNode) => {

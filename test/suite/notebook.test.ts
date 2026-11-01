@@ -174,6 +174,49 @@ suite('DuckExplorer notebook', () => {
     assert.deepStrictEqual(rerun.rows.slice(0, 2), [['98', '2'], ['95', '2']]);
   });
 
+  test('Export writes a result to a file, filtered and sorted like the grid', async () => {
+    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const notebook = await vscode.workspace.openNotebookDocument(
+      'duckexplorer-notebook',
+      new vscode.NotebookData([
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, "SELECT range AS n, range % 3 AS k, 'n=' || range AS label FROM range(1000)", 'sql'),
+      ]),
+    );
+    const editor = await vscode.window.showNotebookDocument(notebook);
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+    await waitFor(() => notebook.cellAt(0).executionSummary?.success !== undefined, 60_000, 'the cell to finish');
+    const table = JSON.parse(Buffer.from(notebook.cellAt(0).outputs[0].items[0].data).toString('utf8'));
+    const request = {
+      type: 'exportResult',
+      requestId: 0,
+      resultId: table.id,
+      filter: { conditions: [{ column: 1, op: 'eq', value: '2' }], where: 'n < 100' },
+      sort: { column: 0, descending: true },
+    };
+
+    const csv = vscode.Uri.file(path.join(workDir, 'filtered numbers.csv'));
+    const exported = await api.controller.exportResult(editor, request, { format: 'csv', uri: csv });
+    assert.deepStrictEqual([exported.uri.fsPath, exported.rowCount], [csv.fsPath, 33]);
+    const lines = fs.readFileSync(csv.fsPath, 'utf8').trim().split(/\r?\n/);
+    assert.strictEqual(lines.length, 34);
+    assert.deepStrictEqual(lines.slice(0, 3), ['n,k,label', '98,2,n=98', '95,2,n=95']);
+    assert.strictEqual(lines[33], '2,2,n=2');
+
+    const parquet = vscode.Uri.file(path.join(workDir, "it's numbers.parquet"));
+    assert.strictEqual((await api.controller.exportResult(editor, request, { format: 'parquet', uri: parquet })).rowCount, 33);
+    const back = await api.kernel.request('executeSql', {
+      notebook: 'export-test',
+      code: `SELECT count(*) AS rows, max(n) AS top, typeof(any_value(k)) AS type FROM '${parquet.fsPath.replace(/'/g, "''")}'`,
+    });
+    assert.deepStrictEqual(back.outputs[0].table.rows, [['33', '98', 'BIGINT']]);
+
+    // A result the kernel no longer holds: the grid is told so (and the user is asked to run the cell again).
+    await assert.rejects(
+      api.controller.exportResult(editor, { ...request, resultId: 'gone-1' }, { format: 'csv', uri: csv }),
+      (err: any) => err.code === 'expired',
+    );
+  });
+
   test('the schema tree lists attached databases down to columns', async () => {
     const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(SAMPLES, 'demo.duckdb'), readOnly: true });
@@ -297,6 +340,17 @@ suite('DuckExplorer notebook', () => {
       await waitFor(() => added()?.executionSummary?.success !== undefined, 30_000, 'the new cell to run');
       assert.strictEqual(added()!.executionSummary?.success, true);
       assert.strictEqual(JSON.parse(Buffer.from(added()!.outputs[0].items[0].data).toString('utf8')).rowCount, 12);
+
+      // Export under the panel's grid, and on the table in the tree.
+      const csv = vscode.Uri.file(path.join(workDir, 'items.csv'));
+      const sort = { column: 0, descending: true };
+      const request = { type: 'exportResult', requestId: 0, resultId: table.id, filter, sort };
+      assert.strictEqual((await (api.summary as any).exportResult(request, { format: 'csv', uri: csv })).rowCount, 12);
+      assert.deepStrictEqual(fs.readFileSync(csv.fsPath, 'utf8').split(/\r?\n/).slice(0, 3), ['id,label', '46,item 2', '42,item 2']);
+      const parquet = vscode.Uri.file(path.join(workDir, 'items.parquet'));
+      const whole = await vscode.commands.executeCommand<any>('duckexplorer.exportTable', items, { format: 'parquet', uri: parquet });
+      assert.strictEqual(whole.rowCount, 50);
+      assert.ok(fs.statSync(parquet.fsPath).size > 0);
     } finally {
       await api.kernel.request('detach', { alias });
     }

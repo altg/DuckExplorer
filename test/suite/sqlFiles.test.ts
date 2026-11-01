@@ -75,6 +75,22 @@ suite('DuckExplorer .sql files', () => {
     assert.strictEqual(current.source.label, 'queries.sql:5');
   });
 
+  test('Export under the results view writes its rows to a file', async () => {
+    const { result, source } = api.runner.view.current;
+    assert.strictEqual(source.label, 'queries.sql:5');
+    const csv = vscode.Uri.file(path.join(path.dirname(uri.fsPath), 'labels.csv'));
+    const sort = { column: 0, descending: true };
+    const request = { type: 'exportResult', requestId: 0, resultId: result.table.id, sort };
+    assert.strictEqual((await api.runner.exportResult(request, { format: 'csv', uri: csv })).rowCount, 4);
+    assert.deepStrictEqual(fs.readFileSync(csv.fsPath, 'utf8').trim().split(/\r?\n/), [
+      'label,n',
+      'item 3,12',
+      'item 2,12',
+      'item 1,13',
+      'item 0,13',
+    ]);
+  });
+
   test('a failing statement stops the file and is marked where DuckDB says', async () => {
     const result = await vscode.commands.executeCommand<any>('duckexplorer.runFile', uri);
     assert.strictEqual(result.completed, 2);

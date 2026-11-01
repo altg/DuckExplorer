@@ -7,28 +7,41 @@ import { RendererRequest, RendererResponse } from '../kernel/protocol';
 const KERNEL_METHODS = new Set<string>(['fetchPage', 'profileResult', 'filterSql'] satisfies RendererRequest['type'][]);
 
 export type InsertFilteredCell = Extract<RendererRequest, { type: 'insertFilteredCell' }>;
+export type ExportResult = Extract<RendererRequest, { type: 'exportResult' }>;
+
+/** The requests of a grid that its host answers: it knows where a query goes, and where files are. */
+export interface GridHost {
+  insertFilteredCell(request: InsertFilteredCell): Promise<{}>;
+  /** Asks for a file and exports to it (see exportRows); says itself how it went. */
+  exportResult(request: ExportResult): Promise<unknown>;
+}
 
 export function isGridRequest(message: unknown): message is RendererRequest {
   const type = (message as RendererRequest | undefined)?.type;
-  return type !== undefined && (KERNEL_METHODS.has(type) || type === 'insertFilteredCell');
+  return type !== undefined && (KERNEL_METHODS.has(type) || type === 'insertFilteredCell' || type === 'exportResult');
 }
 
 /**
- * Answers a results grid, in a notebook output or the summary panel: kernel methods go to the kernel,
- * and `insertFilteredCell` to the caller, which knows where the new cell belongs.
+ * Answers a results grid, in a notebook output, the summary panel or the results view: kernel methods go
+ * to the kernel, and `insertFilteredCell` and `exportResult` to the grid's host.
  */
-export async function answerGridRequest(
-  kernel: KernelClient,
-  message: RendererRequest,
-  insertFilteredCell: (request: InsertFilteredCell) => Promise<{}>,
-): Promise<RendererResponse> {
+export async function answerGridRequest(kernel: KernelClient, message: RendererRequest, host: GridHost): Promise<RendererResponse> {
   const { type, requestId, ...params } = message;
-  if (!kernel.isRunning) {
+  // An export says itself that its rows are gone, rather than leaving it to the grid.
+  if (!kernel.isRunning && type !== 'exportResult') {
     // Outputs from a previous session (or a reopened file): don't start a kernel just to say so.
     return { type: 'response', requestId, error: 'expired' };
   }
   try {
-    const result = message.type === 'insertFilteredCell' ? await insertFilteredCell(message) : await kernel.request(type, params);
+    let result: unknown;
+    if (message.type === 'insertFilteredCell') {
+      result = await host.insertFilteredCell(message);
+    } else if (message.type === 'exportResult') {
+      await host.exportResult(message);
+      result = {};
+    } else {
+      result = await kernel.request(type, params);
+    }
     return { type: 'response', requestId, result };
   } catch (err) {
     const expired = err instanceof KernelRequestError && err.code === 'expired';

@@ -4,7 +4,8 @@ import { HistoryOutcome } from '../history/entries';
 import { HISTORY_SCHEME, QueryHistory, QueryRun } from '../history/queryHistory';
 import { KernelClient } from '../kernel/kernelProcess';
 import { RunSource, StatementError, StatementsResult } from '../kernel/protocol';
-import { InsertFilteredCell } from '../notebook/gridRequests';
+import { ExportChoice, Exported, exportRows, ExportSource } from '../notebook/export';
+import { ExportResult, InsertFilteredCell } from '../notebook/gridRequests';
 import { baseDirectory, setBaseDirectory, sqlFilesEnabled } from './documents';
 import { SqlResultsView } from './resultsView';
 import { splitStatements, Statement, statementAt } from './statements';
@@ -45,6 +46,7 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
       cancel: () => void kernel.interrupt(),
       reveal: () => void this.reveal(),
       insertFilteredCell: (request) => this.insertQuery(request),
+      exportResult: (request) => this.exportResult(request),
     });
     this.disposables = [
       this.diagnostics,
@@ -233,6 +235,21 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
     editor.revealRange(editor.selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     void this.run(document, [added]);
     return {};
+  }
+
+  /** The grid's "Export": the rows as the grid shows them, to a file (by default beside the .sql file). */
+  exportResult({ resultId, filter, sort }: ExportResult, choice?: ExportChoice): Promise<Exported | undefined> {
+    const run = this.latest?.result?.table?.id === resultId ? this.latest : undefined;
+    const uri = run?.document.uri;
+    const source: ExportSource = {
+      title: filter ? 'Export the filtered rows' : 'Export the rows',
+      name: uri ? path.basename(uri.path, path.extname(uri.path)) : 'results',
+      folder: run && baseDirectory(run.document),
+      method: 'exportResult',
+      params: { resultId, filter, sort },
+      rerun: 'Run the statement again',
+    };
+    return exportRows(this.kernel, source, choice);
   }
 
   /** Where a statement of `run` is now: where it was while the file is unchanged, else the same text nearest to there. */

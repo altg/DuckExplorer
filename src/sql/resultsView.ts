@@ -1,13 +1,12 @@
 import * as vscode from 'vscode';
 import { KernelClient } from '../kernel/kernelProcess';
 import { ResultsAction, ResultsMessage } from '../kernel/protocol';
-import { answerGridRequest, gridWebviewHtml, InsertFilteredCell, isGridRequest } from '../notebook/gridRequests';
+import { answerGridRequest, GridHost, gridWebviewHtml, isGridRequest } from '../notebook/gridRequests';
 
-export interface ResultsViewHandlers {
+/** The header's buttons, and the grid's "Insert query" (insertFilteredCell) and Export. */
+export interface ResultsViewHandlers extends GridHost {
   cancel(): void;
   reveal(): void;
-  /** The grid's "Insert query". */
-  insertFilteredCell(request: InsertFilteredCell): Promise<{}>;
 }
 
 /**
@@ -60,7 +59,7 @@ export class SqlResultsView implements vscode.WebviewViewProvider {
 
   private async onMessage(view: vscode.WebviewView, message: ResultsAction | unknown): Promise<void> {
     if (isGridRequest(message)) {
-      const response = await answerGridRequest(this.kernel, message, (request) => this.handlers.insertFilteredCell(request));
+      const response = await answerGridRequest(this.kernel, message, this.handlers);
       await view.webview.postMessage(response);
       return;
     }

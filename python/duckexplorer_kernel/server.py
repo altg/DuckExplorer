@@ -16,12 +16,23 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
+from .export import ExportFailed
 from .filters import InvalidFilter
 from .kernel import Kernel
 from .results import ResultExpired
 
 # Served on a side thread (with the side cursor) so they don't wait for a running cell.
-_SIDE_METHODS = {"schema", "sqlCatalog", "fetchPage", "profileResult", "filterSql", "filteredQuery", "summarize"}
+_SIDE_METHODS = {
+    "schema",
+    "sqlCatalog",
+    "fetchPage",
+    "profileResult",
+    "filterSql",
+    "filteredQuery",
+    "summarize",
+    "exportResult",
+    "exportRelation",
+}
 
 
 class Server:
@@ -56,6 +67,8 @@ class Server:
             "profileResult": lambda p: k.profile_result(p["resultId"], p.get("filter")),
             "filterSql": lambda p: k.filter_sql(p["resultId"], p.get("filter")),
             "filteredQuery": lambda p: k.filtered_query(p["resultId"], p["code"], p.get("filter"), p.get("sort")),
+            "exportResult": lambda p: k.export_result(p["resultId"], p["path"], p["format"], p.get("filter"), p.get("sort")),
+            "exportRelation": lambda p: k.export_relation(p["database"], p["schema"], p["name"], p["path"], p["format"]),
             "forgetNotebook": lambda p: k.forget_notebook(p["notebook"]),
         }
 
@@ -102,8 +115,8 @@ class Server:
             self._reply(msg_id, handler(message.get("params") or {}))
         except ResultExpired:
             self._reply(msg_id, error={"code": "expired", "message": "Result is no longer available; re-run the cell."})
-        except InvalidFilter as exc:
-            # The user's own input (e.g. the grid's WHERE text): no traceback for the log.
+        except (InvalidFilter, ExportFailed) as exc:
+            # The user's own doing (the grid's WHERE text, a file that can't be written): no traceback for the log.
             self._reply(msg_id, error={"code": "invalid", "message": str(exc)})
         except BaseException as exc:  # never let one request take the kernel down
             self._reply(

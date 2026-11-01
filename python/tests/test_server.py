@@ -58,6 +58,15 @@ def test_protocol_round_trip(tmp_path, sample_db):
         assert invalid["code"] == "invalid" and "traceback" not in invalid
         assert invalid["message"].startswith("Binder Error")
 
+        # Exports run beside cells too; a file that can't be written is the user's to fix (no traceback).
+        exported = tmp_path / "n.csv"
+        export = {"resultId": table["id"], "path": str(exported), "format": "csv", "filter": {"conditions": [], "where": "n > 5"}}
+        assert request(63, "exportResult", export)["result"] == {"rowCount": 1}
+        assert exported.read_text().splitlines() == ["n", "1000"]
+        unwritable = request(64, "exportResult", {**export, "path": str(tmp_path / "missing" / "n.csv")})["error"]
+        assert unwritable["code"] == "invalid" and "traceback" not in unwritable
+        assert request(65, "exportResult", {**export, "resultId": "r999"})["error"]["code"] == "expired"
+
         unknown = request(7, "nope")
         assert unknown["error"]["code"] == "unknown-method"
 

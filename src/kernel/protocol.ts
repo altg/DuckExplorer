@@ -226,6 +226,9 @@ export interface ResultProfile {
   columns: ColumnProfile[];
 }
 
+/** The files an export writes (python/duckexplorer_kernel/export.py). */
+export type ExportFormat = 'csv' | 'parquet' | 'xlsx';
+
 // Renderer <-> extension messages (notebook renderer messaging). Each request type is also the
 // kernel method that answers it; the remaining fields are its params.
 
@@ -242,7 +245,12 @@ export type RendererRequest =
   | { type: 'profileResult'; requestId: number; resultId: string; filter?: FilterSpec }
   | { type: 'filterSql'; requestId: number; resultId: string; filter?: FilterSpec }
   /** Answered by the extension: a SQL cell below the result's own, rerunning its query filtered and sorted. */
-  | { type: 'insertFilteredCell'; requestId: number; resultId: string; filter?: FilterSpec; sort?: SortSpec };
+  | { type: 'insertFilteredCell'; requestId: number; resultId: string; filter?: FilterSpec; sort?: SortSpec }
+  /**
+   * Answered by the extension: asks for a format and a file, then has the kernel write the rows there,
+   * filtered and sorted like the grid (the kernel method also takes `path` and `format`).
+   */
+  | { type: 'exportResult'; requestId: number; resultId: string; filter?: FilterSpec; sort?: SortSpec };
 
 export interface RendererResults {
   /** `rowCount` is the number of rows in the sorted/filtered view. */
@@ -251,6 +259,8 @@ export interface RendererResults {
   /** The filter as one SQL condition over the result's column names. */
   filterSql: { where: string };
   insertFilteredCell: Record<string, never>;
+  /** The extension says how the export went. */
+  exportResult: Record<string, never>;
 }
 
 // Summary panel (src/explorer/summaryPanel.ts <-> src/renderer/summary.ts). The panel's grid also

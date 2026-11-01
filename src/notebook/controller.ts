@@ -3,8 +3,9 @@ import * as vscode from 'vscode';
 import { HistoryOutcome, withoutExcerpt } from '../history/entries';
 import { QueryHistory } from '../history/queryHistory';
 import { KernelClient } from '../kernel/kernelProcess';
-import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, PLOTLY_MIME, RENDERER_ID, TABLE_MIME } from '../kernel/protocol';
-import { answerGridRequest, InsertFilteredCell, isGridRequest } from './gridRequests';
+import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, PLOTLY_MIME, RENDERER_ID, TABLE_MIME, TableResult } from '../kernel/protocol';
+import { ExportChoice, Exported, exportRows, ExportSource } from './export';
+import { answerGridRequest, ExportResult, InsertFilteredCell, isGridRequest } from './gridRequests';
 
 interface QueuedCell {
   cell: vscode.NotebookCell;
@@ -145,7 +146,10 @@ export class DuckbookController implements vscode.Disposable {
 
   private async onRendererMessage(editor: vscode.NotebookEditor, message: unknown): Promise<void> {
     if (isGridRequest(message)) {
-      const response = await answerGridRequest(this.kernel, message, (request) => this.insertFilteredCell(editor, request));
+      const response = await answerGridRequest(this.kernel, message, {
+        insertFilteredCell: (request) => this.insertFilteredCell(editor, request),
+        exportResult: (request) => this.exportResult(editor, request),
+      });
       await this.messaging.postMessage(response, editor);
     }
   }
@@ -155,7 +159,7 @@ export class DuckbookController implements vscode.Disposable {
    * filter and sort (the kernel rewrites the query), and runs it.
    */
   async insertFilteredCell(editor: vscode.NotebookEditor, { resultId, filter, sort }: InsertFilteredCell): Promise<{}> {
-    const source = editor.notebook.getCells().find((cell) => showsResult(cell, resultId));
+    const source = editor.notebook.getCells().find((cell) => tableIn(cell, resultId));
     if (!source) {
       throw new Error('the cell that made this result was run again or removed.');
     }
@@ -182,6 +186,24 @@ export class DuckbookController implements vscode.Disposable {
     this.enqueue([editor.notebook.cellAt(index)]);
     return {};
   }
+
+  /** "Export" under a result: its rows as the grid shows them, to a file (by default beside the notebook). */
+  exportResult(editor: vscode.NotebookEditor, { resultId, filter, sort }: ExportResult, choice?: ExportChoice): Promise<Exported | undefined> {
+    const { uri } = editor.notebook;
+    const cell = editor.notebook.getCells().find((c) => tableIn(c, resultId));
+    const stem = path.basename(uri.path, path.extname(uri.path));
+    // A result kept as `-- name: sales` is saved as sales.csv.
+    const name = (cell && tableIn(cell, resultId)?.boundTo?.[1]) ?? (cell ? `${stem}-cell${cell.index + 1}` : stem);
+    const source: ExportSource = {
+      title: filter ? 'Export the filtered rows' : 'Export the rows',
+      name,
+      folder: notebookDirectory(uri),
+      method: 'exportResult',
+      params: { resultId, filter, sort },
+      rerun: 'Run the cell again',
+    };
+    return exportRows(this.kernel, source, choice);
+  }
 }
 
 /** How a SQL cell went, for the history. */
@@ -193,10 +215,13 @@ function cellOutcome({ outputs, error }: ExecuteResult): HistoryOutcome {
   return table ? { kind: 'rows', rows: table.rowCount } : { kind: 'done' };
 }
 
-function showsResult(cell: vscode.NotebookCell, resultId: string): boolean {
-  return cell.outputs.some((output) =>
-    output.items.some((item) => item.mime === TABLE_MIME && JSON.parse(Buffer.from(item.data).toString('utf8')).id === resultId),
-  );
+/** The result `resultId` among the cell's outputs. */
+function tableIn(cell: vscode.NotebookCell, resultId: string): TableResult | undefined {
+  for (const item of cell.outputs.flatMap((output) => output.items)) {
+    const table = item.mime === TABLE_MIME ? (JSON.parse(Buffer.from(item.data).toString('utf8')) as TableResult) : undefined;
+    if (table?.id === resultId) return table;
+  }
+  return undefined;
 }
 
 /** The folder a notebook's cells run in: relative paths in them resolve against it. */

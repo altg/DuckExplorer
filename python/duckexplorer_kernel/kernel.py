@@ -18,7 +18,7 @@ from typing import Any, Iterator
 import duckdb
 import pyarrow as pa
 
-from . import catalog, pyexec, script
+from . import catalog, export, pyexec, script
 from .results import ResultStore, StoredResult
 from .session import Session, quote_ident
 
@@ -249,7 +249,8 @@ class Kernel:
         """A table or view as a stored result, for the summary panel (Column Explorer, rows, filters).
 
         Holds every row, or a reservoir sample of SUMMARY_ROWS rows when there are more; then the
-        payload's `sampledFrom` is the full row count. Runs on the side cursor, beside a running cell.
+        payload's `sampledFrom` is the full row count, and exports read the relation instead. Runs on the
+        side cursor, beside a running cell.
         """
         qualified = ".".join(quote_ident(part) for part in (database, schema, name))
         started = time.perf_counter()
@@ -263,6 +264,7 @@ class Kernel:
         stored = self.results.add(table, types)
         extra: dict[str, Any] = {"elapsedMs": round(_ms_since(started), 1)}
         if sample:
+            stored.sample_of = qualified
             extra["sampledFrom"] = count
         return self.results.describe(stored, self.page_size, **extra)
 
@@ -284,6 +286,17 @@ class Kernel:
 
     def filtered_query(self, result_id: str, code: str, filter_spec: dict | None, sort: dict | None) -> dict:
         return {"code": self.results.filtered_query(result_id, code, filter_spec, sort)}
+
+    def export_result(
+        self, result_id: str, path: str, file_format: str, filter_spec: dict | None = None, sort: dict | None = None
+    ) -> dict:
+        return {"rowCount": self.results.export(result_id, path, file_format, filter_spec, sort)}
+
+    def export_relation(self, database: str, schema: str, name: str, path: str, file_format: str) -> dict:
+        """Every row of a table or view, written to a file (Export in the Databases view)."""
+        qualified = ".".join(quote_ident(part) for part in (database, schema, name))
+        with self.session.side_lock:
+            return {"rowCount": export.copy(self.session.side, f"SELECT * FROM {qualified}", path, file_format)}
 
     # -- helpers -------------------------------------------------------------------
 

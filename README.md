@@ -31,6 +31,13 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
     distinct count, and min/max/mean, for the rows the filter keeps. Click a histogram bar or a
     value to filter to it (bars re-bin, so you can drill in), or elsewhere on a column's line to
     jump to that column in the rows.
+  - **Export**: the **Export** button under a result saves its rows to a CSV, Parquet or Excel
+    (`.xlsx`) file, filtered and sorted as the grid shows them. Choose the format, then the file (the
+    dialog opens in the notebook's folder, and a cell's `-- name:` names the file); a notification
+    says how many rows were written, with **Reveal** and **Open**. Excel files are
+    written by DuckDB's `excel` extension, which is installed the first time (that needs an internet
+    connection), and a sheet holds at most 1,048,575 rows. Results from before a kernel restart have
+    to be run again first.
   - **SQL completions**: table and view names after `FROM` and `JOIN` (from every attached
     database, plus the notebook's DataFrames), the columns of the tables the query reads (`o.`
     lists the columns of the table aliased `o`, and CTEs and subqueries count too), struct
@@ -49,16 +56,19 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
 - **Table summary**: click a table or view in the Databases view (the arrow still lists its
   columns) to open its summary beside the notebook: the Column Explorer for the whole relation,
   its rows, and the same sorting and filters as under a notebook cell. **New cell** there writes
-  `SELECT * FROM <table> WHERE …` into the notebook. Tables over 1,000,000 rows are summarized
-  from a random sample, which the panel says. **Refresh** reads the rows again.
+  `SELECT * FROM <table> WHERE …` into the notebook, and **Export** saves the rows to a file. Tables
+  over 1,000,000 rows are summarized from a random sample, which the panel says; Export still saves
+  every row that matches the filter. **Refresh** reads the rows again. **Export…** on a table or view
+  in the Databases view saves all of it.
 - **Preview Table** from the tree adds and runs `SELECT * … LIMIT 100` in the active notebook.
 - **.sql files**: **Ctrl+Enter** (or **Run** above a statement) runs the statement at the cursor,
   or the selected statements; **Ctrl+Shift+Enter** (or the Run button in the editor title, or
   **Run File** on a `.sql` file in the Explorer) runs the whole file, stopping at the first error.
   The last statement's rows show in the **DuckDB Results** view in the bottom panel, with the same
-  grid as a notebook cell (sorting, filters, Column Explorer); its **Insert query** writes the
-  filtered, sorted query below the statement and runs it. Statements without rows say what they
-  did (`3 rows inserted`). An error is underlined where DuckDB says it is. Files share the session
+  grid as a notebook cell (sorting, filters, Column Explorer, and Export, into the file's folder);
+  its **Insert query** writes the filtered, sorted query below the statement and runs it. Statements
+  without rows say what they did (`3 rows inserted`). An error is underlined where DuckDB says it
+  is. Files share the session
   with notebooks, so a temporary table made in one is visible in the other, and relative paths
   resolve against the file's folder. Completions work as in notebook cells once the kernel is
   running (a `.sql` file alone doesn't start it). Turn all of this off with `duckexplorer.sqlFiles`.
@@ -143,6 +153,15 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
   become ranges. Integer and DATE bars are exact; a DOUBLE or timestamp value right on a bar's
   edge can land on the other side in SQL, and the grid says so when the row count changes.
   The new cell reruns only the cell's last statement, as a subquery.
+- An export runs on the second cursor too. The kernel takes the view's rows from the stored Arrow
+  table in display order (the row numbers the grid pages through) and writes them with
+  `COPY (SELECT … FROM <that Arrow table>) TO 'file' (FORMAT csv | parquet | xlsx)`, so the file
+  holds exactly the grid's rows, in its order, and Parquet keeps the result's types. DuckDB makes
+  duplicate column names unique (`a`, `a_1`). A summary's sample exports its relation instead,
+  with the filter and sort written as SQL, as for **New cell**. The `excel` extension is installed
+  with `INSTALL excel` into DuckDB's own extension folder (`~/.duckdb/extensions`); when that
+  fails (offline, say), the export says so and suggests CSV or Parquet. Excel sheets are checked
+  against their 1,048,575-row limit before anything is written.
 - Completions read the cell's SQL with a tokenizer rather than a parser, so half-typed SQL
   still works. They find the query's `FROM` clause (before or after the cursor), its aliases,
   CTEs and subqueries, and look the names up in a catalog the kernel sends: the schema
@@ -165,7 +184,7 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view, summary panel),
-`src/notebook` (serializer, controller, grid requests), `src/sql` (SQL tokenizer, cursor
+`src/notebook` (serializer, controller, grid requests, export), `src/sql` (SQL tokenizer, cursor
 context, completions and parameter hints; running `.sql` files and their results view),
 `src/history` (query history: entries, store, view),
 `src/renderer` (grid, filter bar and menus, Column Explorer, Plotly, the pages of the summary
@@ -184,7 +203,7 @@ npm test              # VS Code integration test (downloads a test build of VS C
 
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
   grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions,
-  running `.sql` files, query history. Next: export (CSV/Parquet/Excel), drag-and-drop data
+  running `.sql` files, query history, export (CSV/Parquet/Excel). Next: drag-and-drop data
   files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

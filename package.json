@@ -139,6 +139,12 @@
         "icon": "$(graph)"
       },
       {
+        "command": "duckexplorer.exportTable",
+        "title": "Export…",
+        "category": "DuckExplorer",
+        "icon": "$(export)"
+      },
+      {
         "command": "duckexplorer.copyName",
         "title": "Copy Name",
         "category": "DuckExplorer"
@@ -263,9 +269,14 @@
           "group": "1_main@2"
         },
         {
+          "command": "duckexplorer.exportTable",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "group": "1_main@3"
+        },
+        {
           "command": "duckexplorer.copyName",
           "when": "view == duckexplorer.schema && viewItem != message",
-          "group": "1_main@3"
+          "group": "1_main@4"
         },
         {
           "command": "duckexplorer.detachDatabase",
@@ -325,6 +336,10 @@
         },
         {
           "command": "duckexplorer.showSummary",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.exportTable",
           "when": "false"
         },
         {

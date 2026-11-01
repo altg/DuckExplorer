@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import duckdb
 import pyarrow as pa
 
-from . import filters
+from . import export, filters
 from . import profile as column_profile
 from .session import Session, quote_ident
 
@@ -18,6 +18,8 @@ MAX_RESULTS = 20
 # Sorted/filtered views and filtered profiles kept per result; the grid only shows one at a time.
 MAX_VIEWS = 3
 MAX_PROFILES = 2
+# The name an exported view is scanned by, on the side cursor.
+_EXPORT_VIEW = "__dx_export"
 
 SortKey = tuple[int, bool]  # (column, descending)
 
@@ -36,6 +38,8 @@ class StoredResult:
     profiles: OrderedDict[str, dict] = field(default_factory=OrderedDict)
     # (filter key, sort) -> row numbers of that view, in display order.
     views: OrderedDict[tuple[str, SortKey | None], pa.ChunkedArray] = field(default_factory=OrderedDict)
+    # A table summary's sample of a large relation: the relation's SQL name, so exports read every row.
+    sample_of: str | None = None
 
     @property
     def row_count(self) -> int:
@@ -140,6 +144,43 @@ class ResultStore:
             sort_key = _sort_key(sort, stored)
             order_by = "" if sort_key is None else filters.order_sql(sort_key, stored.columns, self._session.side)
         return filters.filtered_query(code, where, order_by)
+
+    def export(
+        self,
+        result_id: str,
+        path: str,
+        file_format: str,
+        filter_spec: dict | None = None,
+        sort: dict | None = None,
+    ) -> int:
+        """Writes a view (the grid's filter and sort) to a file, as the grid shows it; returns the number of
+        rows. A table summary's sample exports every row of its relation, filtered and sorted in SQL."""
+        stored = self.get(result_id)
+        spec = filters.normalize(filter_spec)
+        if not stored.columns:
+            raise export.ExportFailed("The result has no columns to export.")
+        with self._session.side_lock:
+            side = self._session.side
+            sort_key = _sort_key(sort, stored)
+            if stored.sample_of is not None:
+                export.check_format(file_format)
+                query = f"SELECT * FROM {stored.sample_of}"
+                where = filters.to_sql(spec, stored.columns, side)
+                if where:
+                    query += f" WHERE {where}"
+                if sort_key is not None:
+                    query += f" ORDER BY {filters.order_sql(sort_key, stored.columns, side)}"
+                return export.copy(side, query, path, file_format)
+            rows = self._view(stored, sort_key, spec)
+            export.check_format(file_format, stored.row_count if rows is None else len(rows))
+            # Taken in display order, which COPY keeps (DuckDB preserves the insertion order of a scan).
+            data = stored.scan if rows is None else stored.scan.take(rows)
+            names = ", ".join(f"c{i} AS {quote_ident(c['name'])}" for i, c in enumerate(stored.columns))
+            side.register(_EXPORT_VIEW, data)
+            try:
+                return export.copy(side, f"SELECT {names} FROM {_EXPORT_VIEW}", path, file_format)
+            finally:
+                side.unregister(_EXPORT_VIEW)
 
     def describe(self, stored: StoredResult, page_size: int, **extra) -> dict:
         """The table payload sent to the notebook renderer: metadata plus the first page."""

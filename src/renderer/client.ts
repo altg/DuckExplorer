@@ -43,6 +43,10 @@ export class HostClient {
     return this.request({ type: 'insertFilteredCell', requestId: 0, resultId, filter, sort });
   }
 
+  exportResult(resultId: string, filter?: FilterSpec, sort?: SortSpec): Promise<Reply<RendererResults['exportResult']>> {
+    return this.request({ type: 'exportResult', requestId: 0, resultId, filter, sort });
+  }
+
   private request<T>(request: RendererRequest): Promise<Reply<T>> {
     request.requestId = this.nextId++;
     return new Promise((resolve) => {

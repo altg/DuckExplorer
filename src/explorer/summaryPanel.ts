@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
 import { KernelClient } from '../kernel/kernelProcess';
 import { SummaryAction, SummaryMessage, SummaryRelation, TableResult } from '../kernel/protocol';
-import { answerGridRequest, gridWebviewHtml, InsertFilteredCell, isGridRequest } from '../notebook/gridRequests';
+import { ExportChoice, Exported, exportRows, ExportSource } from '../notebook/export';
+import { answerGridRequest, ExportResult, gridWebviewHtml, InsertFilteredCell, isGridRequest } from '../notebook/gridRequests';
 import { runInNotebook } from '../notebook/insert';
 
 /**
  * The summary shown when a table or view is clicked in the Databases view: one editor panel beside
  * the notebook, reused for each relation, with the results grid opened on its Column Explorer. The
- * kernel loads the relation (or a sample of a large one) as a stored result, so sorting, filtering
- * and "New cell" work as they do under a notebook cell.
+ * kernel loads the relation (or a sample of a large one) as a stored result, so sorting, filtering,
+ * "New cell" and Export work as they do under a notebook cell.
  */
 export class TableSummaryPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
@@ -87,7 +88,10 @@ export class TableSummaryPanel implements vscode.Disposable {
 
   private async onMessage(message: SummaryAction | unknown): Promise<void> {
     if (isGridRequest(message)) {
-      const response = await answerGridRequest(this.kernel, message, (request) => this.insertFilteredCell(request));
+      const response = await answerGridRequest(this.kernel, message, {
+        insertFilteredCell: (request) => this.insertFilteredCell(request),
+        exportResult: (request) => this.exportResult(request),
+      });
       await this.panel?.webview.postMessage(response);
       return;
     }
@@ -120,5 +124,19 @@ export class TableSummaryPanel implements vscode.Disposable {
     });
     await runInNotebook(code);
     return {};
+  }
+
+  /** "Export" under the panel's grid: the relation's rows, filtered and sorted (all of them when the panel shows a sample). */
+  private exportResult({ resultId, filter, sort }: ExportResult, choice?: ExportChoice): Promise<Exported | undefined> {
+    const shown = this.latest?.type === 'summary' && this.latest.table.id === resultId ? this.latest : undefined;
+    const name = shown?.relation.name ?? 'summary';
+    const source: ExportSource = {
+      title: filter ? `Export the filtered rows of ${name}` : `Export ${name}`,
+      name,
+      method: 'exportResult',
+      params: { resultId, filter, sort },
+      rerun: 'Refresh the summary',
+    };
+    return exportRows(this.kernel, source, choice);
   }
 }
