@@ -1,9 +1,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { HistoryOutcome } from '../history/entries';
+import { HISTORY_SCHEME, QueryHistory, QueryRun } from '../history/queryHistory';
 import { KernelClient } from '../kernel/kernelProcess';
 import { RunSource, StatementError, StatementsResult } from '../kernel/protocol';
 import { InsertFilteredCell } from '../notebook/gridRequests';
-import { baseDirectory, sqlFilesEnabled } from './documents';
+import { baseDirectory, setBaseDirectory, sqlFilesEnabled } from './documents';
 import { SqlResultsView } from './resultsView';
 import { splitStatements, Statement, statementAt } from './statements';
 
@@ -22,7 +24,8 @@ interface Run {
 /**
  * Runs the statements of .sql files on the shared kernel (the same session as notebooks): the one
  * at the cursor, the selected ones, or the whole file. The results view shows the last one's rows;
- * an error is also marked in the file. Also offers a Run CodeLens above each statement.
+ * an error is also marked in the file. Also offers a Run CodeLens above each statement. Each run
+ * goes into the query history.
  */
 export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable {
   readonly view: SqlResultsView;
@@ -35,6 +38,7 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
   constructor(
     extensionUri: vscode.Uri,
     private readonly kernel: KernelClient,
+    private readonly history: QueryHistory,
     private readonly onDidExecute: () => void,
   ) {
     this.view = new SqlResultsView(extensionUri, kernel, {
@@ -111,18 +115,33 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
     this.latest = run;
     this.diagnostics.delete(document.uri);
     void this.view.show({ type: 'running', source });
+    const cwd = baseDirectory(document);
+    // For the history: the statements as written, with what is between them.
+    const sql = document.getText().slice(statements[0].start, statements[statements.length - 1].through);
+    const started = Date.now();
+    const ran = (outcome: HistoryOutcome, elapsedMs = Date.now() - started): QueryRun => ({
+      sql,
+      time: started,
+      elapsedMs,
+      statements: statements.length,
+      outcome,
+      source: { kind: 'file', uri: document.uri.toString(), label: source.label, at: statements[0].start },
+      cwd,
+    });
     try {
       const result = await this.kernel.execute<StatementsResult>('runStatements', {
         statements: statements.map((s) => s.text),
-        cwd: baseDirectory(document),
+        cwd,
       });
       run.result = result;
+      this.history.record(ran(outcomeOf(result), result.elapsedMs));
       if (result.error && result.error.ename !== 'KeyboardInterrupt') {
         this.mark(run, result.error);
       }
       if (this.latest === run) void this.view.show({ type: 'result', source, result });
       return result;
     } catch (err) {
+      this.history.record(ran({ kind: 'error', message: (err as Error).message }));
       if (this.latest === run) void this.view.show({ type: 'failed', source, message: (err as Error).message });
       return undefined;
     } finally {
@@ -185,6 +204,14 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
     const statement = run.statements[run.statements.length - 1];
     const { code } = await this.kernel.request<{ code: string }>('filteredQuery', { resultId, code: statement.text, filter, sort });
     const document = await vscode.workspace.openTextDocument(run.document.uri);
+    if (document.uri.scheme === HISTORY_SCHEME) {
+      // The history's documents are read-only: the query goes into a new editor.
+      const copy = await vscode.workspace.openTextDocument({ language: 'sql', content: `${code};\n` });
+      setBaseDirectory(copy.uri, baseDirectory(document));
+      await vscode.window.showTextDocument(copy, { viewColumn: this.columnOf(document), preview: false });
+      void this.run(copy, splitStatements(copy.getText()));
+      return {};
+    }
     const current = this.find(run, document, statement);
     if (!current) {
       throw new Error('the statement that made this result was changed or removed.');
@@ -222,6 +249,15 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
   private columnOf(document: vscode.TextDocument): vscode.ViewColumn | undefined {
     return vscode.window.visibleTextEditors.find((e) => e.document === document)?.viewColumn;
   }
+}
+
+function outcomeOf(result: StatementsResult): HistoryOutcome {
+  if (result.error) {
+    return result.error.ename === 'KeyboardInterrupt'
+      ? { kind: 'interrupted' }
+      : { kind: 'error', message: result.error.message, statement: result.error.statement };
+  }
+  return result.table ? { kind: 'rows', rows: result.table.rowCount } : { kind: 'done', message: result.message || undefined };
 }
 
 /** The file is as it was when the run started, so the run's offsets still hold. */

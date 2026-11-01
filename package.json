@@ -17,6 +17,7 @@
   "activationEvents": [
     "onNotebook:duckexplorer-notebook",
     "onView:duckexplorer.schema",
+    "onView:duckexplorer.history",
     "onLanguage:sql"
   ],
   "contributes": {
@@ -64,6 +65,10 @@
         {
           "id": "duckexplorer.schema",
           "name": "Databases"
+        },
+        {
+          "id": "duckexplorer.history",
+          "name": "Query History"
         }
       ],
       "duckexplorer-results": [
@@ -78,6 +83,10 @@
       {
         "view": "duckexplorer.schema",
         "contents": "Attach a DuckDB database file to browse its schemas, tables and columns.\n[Add Database](command:duckexplorer.addDatabase)\n[New Notebook](command:duckexplorer.newNotebook)"
+      },
+      {
+        "view": "duckexplorer.history",
+        "contents": "The queries you run in DuckDB notebooks and .sql files are listed here, newest first, to look at, run again or find where they ran."
       }
     ],
     "commands": [
@@ -135,6 +144,58 @@
         "category": "DuckExplorer"
       },
       {
+        "command": "duckexplorer.showQuery",
+        "title": "Show Query",
+        "category": "DuckExplorer"
+      },
+      {
+        "command": "duckexplorer.rerunQuery",
+        "title": "Run Again",
+        "category": "DuckExplorer",
+        "icon": "$(play)"
+      },
+      {
+        "command": "duckexplorer.openQuery",
+        "title": "Open in Editor",
+        "category": "DuckExplorer",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "duckexplorer.runQueryInNotebook",
+        "title": "Run in Notebook",
+        "category": "DuckExplorer",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "duckexplorer.goToQuerySource",
+        "title": "Go to Source",
+        "category": "DuckExplorer",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "duckexplorer.copyQuery",
+        "title": "Copy Query",
+        "category": "DuckExplorer"
+      },
+      {
+        "command": "duckexplorer.removeQuery",
+        "title": "Remove from History",
+        "category": "DuckExplorer",
+        "icon": "$(close)"
+      },
+      {
+        "command": "duckexplorer.searchHistory",
+        "title": "Search Query History…",
+        "category": "DuckExplorer",
+        "icon": "$(search)"
+      },
+      {
+        "command": "duckexplorer.clearHistory",
+        "title": "Clear Query History",
+        "category": "DuckExplorer",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "duckexplorer.restartKernel",
         "title": "Restart Kernel",
         "category": "DuckExplorer",
@@ -173,6 +234,16 @@
           "command": "duckexplorer.showLog",
           "when": "view == duckexplorer.schema",
           "group": "overflow"
+        },
+        {
+          "command": "duckexplorer.searchHistory",
+          "when": "view == duckexplorer.history",
+          "group": "navigation@1"
+        },
+        {
+          "command": "duckexplorer.clearHistory",
+          "when": "view == duckexplorer.history",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -205,6 +276,46 @@
           "command": "duckexplorer.detachDatabase",
           "when": "view == duckexplorer.schema && viewItem == database.attached",
           "group": "2_manage@1"
+        },
+        {
+          "command": "duckexplorer.rerunQuery",
+          "when": "view == duckexplorer.history && viewItem == query",
+          "group": "inline@1"
+        },
+        {
+          "command": "duckexplorer.openQuery",
+          "when": "view == duckexplorer.history && viewItem == query",
+          "group": "inline@2"
+        },
+        {
+          "command": "duckexplorer.rerunQuery",
+          "when": "view == duckexplorer.history && viewItem == query",
+          "group": "1_run@1"
+        },
+        {
+          "command": "duckexplorer.runQueryInNotebook",
+          "when": "view == duckexplorer.history && viewItem == query",
+          "group": "1_run@2"
+        },
+        {
+          "command": "duckexplorer.openQuery",
+          "when": "view == duckexplorer.history && viewItem == query",
+          "group": "2_open@1"
+        },
+        {
+          "command": "duckexplorer.goToQuerySource",
+          "when": "view == duckexplorer.history && viewItem == query",
+          "group": "2_open@2"
+        },
+        {
+          "command": "duckexplorer.copyQuery",
+          "when": "view == duckexplorer.history && viewItem == query",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "duckexplorer.removeQuery",
+          "when": "view == duckexplorer.history && viewItem =~ /^(query|day)$/",
+          "group": "4_remove@1"
         }
       ],
       "commandPalette": [
@@ -222,6 +333,34 @@
         },
         {
           "command": "duckexplorer.detachDatabase",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.showQuery",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.rerunQuery",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.openQuery",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.runQueryInNotebook",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.goToQuerySource",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.copyQuery",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.removeQuery",
           "when": "false"
         },
         {
@@ -277,6 +416,18 @@
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
         "when": "editorTextFocus && editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+      },
+      {
+        "command": "duckexplorer.removeQuery",
+        "key": "delete",
+        "mac": "cmd+backspace",
+        "when": "focusedView == duckexplorer.history && !inputFocus"
+      },
+      {
+        "command": "duckexplorer.copyQuery",
+        "key": "ctrl+c",
+        "mac": "cmd+c",
+        "when": "focusedView == duckexplorer.history && !inputFocus"
       }
     ],
     "configuration": {
@@ -304,6 +455,13 @@
           "type": "boolean",
           "default": true,
           "description": "Run .sql files with DuckDB: a Run button above each statement and in the editor title, Ctrl+Enter (the statement at the cursor or the selection) and Ctrl+Shift+Enter (the file), and completions while the kernel runs."
+        },
+        "duckexplorer.historySize": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "How many queries the Query History keeps for this workspace. 0 stops recording. Queries that create secrets or set credentials are never kept."
         }
       }
     }

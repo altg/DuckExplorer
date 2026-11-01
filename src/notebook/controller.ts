@@ -1,5 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { HistoryOutcome, withoutExcerpt } from '../history/entries';
+import { QueryHistory } from '../history/queryHistory';
 import { KernelClient } from '../kernel/kernelProcess';
 import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, PLOTLY_MIME, RENDERER_ID, TABLE_MIME } from '../kernel/protocol';
 import { answerGridRequest, InsertFilteredCell, isGridRequest } from './gridRequests';
@@ -11,7 +13,8 @@ interface QueuedCell {
 
 /**
  * Runs SQL and Python cells of `.duckbook` notebooks on the shared kernel, one at a time, and
- * answers the results renderer's requests (pages, sorted pages, column statistics).
+ * answers the results renderer's requests (pages, sorted pages, column statistics). SQL cells go
+ * into the query history.
  */
 export class DuckbookController implements vscode.Disposable {
   private readonly controller: vscode.NotebookController;
@@ -23,6 +26,7 @@ export class DuckbookController implements vscode.Disposable {
 
   constructor(
     private readonly kernel: KernelClient,
+    private readonly history: QueryHistory,
     private readonly onDidExecute: () => void,
   ) {
     this.controller = vscode.notebooks.createNotebookController('duckexplorer-kernel', NOTEBOOK_TYPE, 'DuckDB');
@@ -102,11 +106,26 @@ export class DuckbookController implements vscode.Disposable {
       code: cell.document.getText(),
       cwd: notebookDirectory(notebookUri),
     };
+    const started = Date.now();
+    const record = (outcome: HistoryOutcome, elapsedMs = Date.now() - started) => {
+      if (language !== 'sql') return;
+      const label = `${path.basename(notebookUri.path)}, cell ${cell.index + 1}`;
+      this.history.record({
+        sql: params.code,
+        time: started,
+        elapsedMs,
+        outcome,
+        source: { kind: 'notebook', uri: params.notebook, label, at: cell.index },
+        cwd: params.cwd,
+      });
+    };
     try {
       const result = await this.kernel.execute<ExecuteResult>(
         language === 'sql' ? 'executeSql' : 'executePython',
         params,
       );
+      const table = result.outputs.find((output) => output.type === 'table')?.table;
+      record(cellOutcome(result), table?.elapsedMs);
       const outputs = result.outputs.map(toCellOutput);
       if (result.error) {
         outputs.push(
@@ -116,6 +135,7 @@ export class DuckbookController implements vscode.Disposable {
       await execution.replaceOutput(outputs);
       execution.end(!result.error, Date.now());
     } catch (err) {
+      record({ kind: 'error', message: (err as Error).message });
       await execution.replaceOutput(errorOutput('Kernel error', (err as Error).message));
       execution.end(false, Date.now());
     } finally {
@@ -162,6 +182,15 @@ export class DuckbookController implements vscode.Disposable {
     this.enqueue([editor.notebook.cellAt(index)]);
     return {};
   }
+}
+
+/** How a SQL cell went, for the history. */
+function cellOutcome({ outputs, error }: ExecuteResult): HistoryOutcome {
+  if (error) {
+    return error.ename === 'KeyboardInterrupt' ? { kind: 'interrupted' } : { kind: 'error', message: withoutExcerpt(error.evalue) };
+  }
+  const table = outputs.find((output) => output.type === 'table')?.table;
+  return table ? { kind: 'rows', rows: table.rowCount } : { kind: 'done' };
 }
 
 function showsResult(cell: vscode.NotebookCell, resultId: string): boolean {

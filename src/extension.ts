@@ -2,6 +2,9 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { AttachedDatabases, qualifiedName, SchemaTreeProvider, TreeNode } from './explorer/schemaTree';
 import { TableSummaryPanel } from './explorer/summaryPanel';
+import { HistoryEntry } from './history/entries';
+import { HistoryNode, QueryHistoryView } from './history/historyView';
+import { HISTORY_SCHEME, QueryHistory } from './history/queryHistory';
 import { KernelClient } from './kernel/kernelProcess';
 import { NOTEBOOK_TYPE } from './kernel/protocol';
 import { DuckbookController } from './notebook/controller';
@@ -13,7 +16,7 @@ import { quoteIdentifier } from './sql/identifiers';
 import { SqlResultsView } from './sql/resultsView';
 import { SqlFileRunner } from './sql/runner';
 
-/** Returned from activate() so integration tests can reach the kernel, tree, controller, summary, catalog and runner. */
+/** Returned from activate() so integration tests can reach the kernel, tree, controller, summary, catalog, runner and history. */
 export interface DuckExplorerApi {
   kernel: KernelClient;
   tree: SchemaTreeProvider;
@@ -21,6 +24,8 @@ export interface DuckExplorerApi {
   summary: TableSummaryPanel;
   catalog: SqlCatalog;
   runner: SqlFileRunner;
+  history: QueryHistory;
+  historyView: QueryHistoryView;
 }
 
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
@@ -38,14 +43,22 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
       tree.refresh();
     }
   };
-  const controller = new DuckbookController(kernel, () => refreshNames(true));
+  const history = new QueryHistory(context.workspaceState);
+  const historyView = new QueryHistoryView(history);
+  const controller = new DuckbookController(kernel, history, () => refreshNames(true));
   const summary = new TableSummaryPanel(context.extensionUri, kernel);
-  const runner = new SqlFileRunner(context.extensionUri, kernel, () => refreshNames(true));
+  const runner = new SqlFileRunner(context.extensionUri, kernel, history, () => refreshNames(true));
   const sql = new SqlLanguageFeatures(catalog);
   const sqlFiles: vscode.DocumentFilter[] = [
     { language: 'sql', scheme: 'file' },
     { language: 'sql', scheme: 'untitled' },
+    { language: 'sql', scheme: HISTORY_SCHEME },
   ];
+  // History commands act on the entry they're given (from the view), else the view's selection.
+  const onEntry = (action: (entry: HistoryEntry) => unknown) => (node?: HistoryNode) => {
+    const [entry] = historyView.entriesOf(node);
+    return entry && action(entry);
+  };
   const sqlEditors: vscode.DocumentSelector = [{ notebookType: NOTEBOOK_TYPE, language: 'sql' }, ...sqlFiles];
 
   context.subscriptions.push(
@@ -55,6 +68,8 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     summary,
     catalog,
     runner,
+    history,
+    historyView,
     vscode.languages.registerCompletionItemProvider(sqlEditors, sql, ...TRIGGER_CHARACTERS),
     vscode.languages.registerSignatureHelpProvider(sqlEditors, sql, { triggerCharacters: ['(', ','], retriggerCharacters: [','] }),
     vscode.languages.registerCodeLensProvider(sqlFiles, runner),
@@ -150,8 +165,19 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
       }
     }),
     vscode.commands.registerCommand('duckexplorer.showLog', () => log.show()),
+    vscode.commands.registerCommand('duckexplorer.showQuery', onEntry((entry) => historyView.show(entry))),
+    vscode.commands.registerCommand('duckexplorer.rerunQuery', onEntry((entry) => historyView.run(entry))),
+    vscode.commands.registerCommand('duckexplorer.openQuery', onEntry((entry) => historyView.openCopy(entry))),
+    vscode.commands.registerCommand('duckexplorer.runQueryInNotebook', onEntry((entry) => runInNotebook(entry.sql))),
+    vscode.commands.registerCommand('duckexplorer.goToQuerySource', onEntry((entry) => historyView.goToSource(entry))),
+    vscode.commands.registerCommand('duckexplorer.copyQuery', onEntry((entry) => vscode.env.clipboard.writeText(entry.sql))),
+    vscode.commands.registerCommand('duckexplorer.removeQuery', (node?: HistoryNode, nodes?: HistoryNode[]) =>
+      historyView.remove(historyView.entriesOf(node, nodes)),
+    ),
+    vscode.commands.registerCommand('duckexplorer.clearHistory', () => historyView.clear()),
+    vscode.commands.registerCommand('duckexplorer.searchHistory', () => historyView.search()),
   );
-  return { kernel, tree, controller, summary, catalog, runner };
+  return { kernel, tree, controller, summary, catalog, runner, history, historyView };
 }
 
 export function deactivate(): void {

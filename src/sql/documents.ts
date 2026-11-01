@@ -10,8 +10,21 @@ export function notebookOf(document: vscode.TextDocument): vscode.NotebookDocume
   );
 }
 
+/** Documents with SQL from the query history, and the folder it ran in, by URI. */
+const directories = new Map<string, string>();
+
+/** SQL from the query history runs where it ran before, rather than in the workspace folder; undefined forgets it. */
+export function setBaseDirectory(uri: vscode.Uri, directory: string | undefined): void {
+  if (directory) directories.set(uri.toString(), directory);
+  else directories.delete(uri.toString());
+}
+
 /** Relative file names in SQL resolve against the notebook's or the .sql file's folder (the kernel runs there). */
 export function baseDirectory(document: vscode.TextDocument): string | undefined {
+  const known = directories.get(document.uri.toString());
+  if (known) {
+    return known;
+  }
   const notebook = notebookOf(document);
   if (notebook) {
     return notebookDirectory(notebook.uri);

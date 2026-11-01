@@ -62,6 +62,17 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
   with notebooks, so a temporary table made in one is visible in the other, and relative paths
   resolve against the file's folder. Completions work as in notebook cells once the kernel is
   running (a `.sql` file alone doesn't start it). Turn all of this off with `duckexplorer.sqlFiles`.
+- **Query History** (in the DuckExplorer view, below Databases): every query run in a notebook SQL
+  cell or a `.sql` file, by day, newest first, with when it ran, how many rows it returned (or what
+  it did, or its error) and how long it took. Hover over one to read all of it. Click it to open it
+  in a read-only editor, where **Run** (or Ctrl+Enter) runs it again, in the folder it first ran in,
+  so relative paths still work. **Run Again** does that in one click; **Open in Editor** copies it
+  into a new editor to change; **Run in Notebook** adds it to the active notebook and runs it; **Go
+  to Source** selects it in its cell or file (where it is now, if the file changed); Delete removes
+  it (or a day's queries, after asking). **Search** in the view's title bar searches every query. The
+  history is kept per workspace, 500 queries by default (`duckexplorer.historySize`). Queries that
+  create secrets or set credentials (`CREATE SECRET`, `SET s3_secret_access_key = …`, a `password=`
+  or `token=` in a connection string, `user:password@` or a SAS `sig=` in a URL) are not kept.
 
 ## Requirements
 
@@ -100,6 +111,7 @@ doesn't work, because the `code` command reads a relative path from the root of 
 | `duckexplorer.pageSize` | 200 | Rows per page in the results grid |
 | `duckexplorer.maxPandasRows` | 1,000,000 | Row cap when a SQL result is turned into a DataFrame (0 = never) |
 | `duckexplorer.sqlFiles` | true | Run buttons, Ctrl+Enter and completions in `.sql` files |
+| `duckexplorer.historySize` | 500 | Queries kept in each workspace's Query History (0 = don't record) |
 
 ## How it works
 
@@ -143,12 +155,19 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
   `execute()` (the relation API that SQL cells use drops the position of binder errors) and reads
   the position from the `LINE n: …` excerpt in DuckDB's message, counting wide characters as
   two columns, as DuckDB does.
+- The query history is kept by the extension in VS Code's workspace state, not by the kernel, so it
+  outlives kernel restarts. A notebook entry is the cell's SQL; a `.sql` entry is the statements that
+  ran, as written, with what was between them. An entry opens as a read-only virtual document
+  (`duckexplorer-history:`) that the `.sql` runner treats like a file, except that **Insert query**
+  puts the new query in a new editor. Go to Source looks for the query's text in its file (the copy
+  nearest to where it ran) or for a cell with that text.
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view, summary panel),
 `src/notebook` (serializer, controller, grid requests), `src/sql` (SQL tokenizer, cursor
 context, completions and parameter hints; running `.sql` files and their results view),
+`src/history` (query history: entries, store, view),
 `src/renderer` (grid, filter bar and menus, Column Explorer, Plotly, the pages of the summary
 panel and results view), `python/duckexplorer_kernel` (kernel), `samples` (demo database
 builder, notebook and `.sql` file).
@@ -157,7 +176,7 @@ builder, notebook and `.sql` file).
 
 ```bash
 npm run test:python   # kernel: pytest
-npm run test:unit     # SQL completion context and statement splitting: mocha, without VS Code
+npm run test:unit     # SQL completion context, statement splitting, history entries: mocha, without VS Code
 npm test              # VS Code integration test (downloads a test build of VS Code once)
 ```
 
@@ -165,7 +184,7 @@ npm test              # VS Code integration test (downloads a test build of VS C
 
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
   grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions,
-  running `.sql` files. Next: query history, export (CSV/Parquet/Excel), drag-and-drop data
+  running `.sql` files, query history. Next: export (CSV/Parquet/Excel), drag-and-drop data
   files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.
