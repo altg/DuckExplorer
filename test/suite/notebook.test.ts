@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { EXTENSION_ID } from './extensionId';
 
 const SAMPLES = path.resolve(__dirname, '..', '..', 'samples');
 const TABLE_MIME = 'application/vnd.duckexplorer.table+json';
@@ -44,7 +45,7 @@ suite('DuckExplorer notebook', () => {
     const notebook = await vscode.workspace.openNotebookDocument(uri);
     await vscode.window.showNotebookDocument(notebook);
     await vscode.commands
-      .executeCommand('notebook.selectKernel', { id: 'duckexplorer-kernel', extension: 'duckexplorer.duckexplorer' })
+      .executeCommand('notebook.selectKernel', { id: 'duckexplorer-kernel', extension: EXTENSION_ID })
       .then(undefined, () => undefined);
 
     const codeCells = notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
@@ -100,7 +101,7 @@ suite('DuckExplorer notebook', () => {
   });
 
   test('the kernel serves sorted and filtered pages and column statistics for a result', async () => {
-    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
       new vscode.NotebookData([
@@ -140,7 +141,7 @@ suite('DuckExplorer notebook', () => {
   });
 
   test('a filtered result becomes a new SQL cell below its own', async () => {
-    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
     const source = '-- name: numbers\nSELECT range AS n, range % 3 AS k FROM range(1000);';
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
@@ -175,7 +176,7 @@ suite('DuckExplorer notebook', () => {
   });
 
   test('the schema tree lists attached databases down to columns', async () => {
-    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(SAMPLES, 'demo.duckdb'), readOnly: true });
     const roots: any[] = await api.tree.getChildren();
     const demo = roots.find((n) => n.kind === 'database' && n.db.name === alias);
@@ -198,7 +199,7 @@ suite('DuckExplorer notebook', () => {
   });
 
   test('SQL cells complete tables, columns, DataFrames and functions, and show parameter hints', async () => {
-    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(SAMPLES, 'demo.duckdb'), readOnly: true });
     await api.kernel.request('executeSql', { notebook: 'completion-test', code: `USE ${alias}` });
     api.catalog.invalidate();
@@ -257,7 +258,7 @@ suite('DuckExplorer notebook', () => {
   });
 
   test('clicking a table in the tree opens its summary', async () => {
-    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(workDir, 'summary.duckdb') });
     try {
       await api.kernel.request('executeSql', {

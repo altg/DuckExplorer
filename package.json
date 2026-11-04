@@ -3,8 +3,16 @@
   "displayName": "DuckExplorer",
   "description": "A DuckDB UI-style analysis workspace: attach DuckDB databases, browse schemas, run SQL notebooks and chart results with Python.",
   "version": "0.1.0",
-  "publisher": "duckexplorer",
+  "publisher": "your-publisher-id",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/altg/DuckExplorer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/altg/DuckExplorer/issues"
+  },
+  "homepage": "https://github.com/altg/DuckExplorer#readme",
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -12,6 +20,18 @@
     "Data Science",
     "Notebooks",
     "Visualization"
+  ],
+  "keywords": [
+    "duckdb",
+    "sql",
+    "database",
+    "notebook",
+    "data analysis",
+    "parquet",
+    "csv",
+    "pandas",
+    "plotly",
+    "matplotlib"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -475,7 +495,9 @@
     "pretest": "npm run compile && npm run compile-tests",
     "test": "node out-test/runTest.js",
     "test:unit": "tsc -p test/unit && mocha --ui tdd out-unit/test/unit/*.test.js",
-    "test:python": "python -m pytest python/tests -q"
+    "test:python": "python -m pytest python/tests -q",
+    "vscode:prepublish": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && npm run typecheck && node esbuild.mjs --production",
+    "package": "vsce package --no-dependencies"
   },
   "dependencies": {
     "@vscode/python-extension": "^1.0.6"
@@ -486,6 +508,7 @@
     "@types/vscode": "~1.100.0",
     "@types/vscode-notebook-renderer": "^1.72.4",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.28.2",
     "mocha": "^11.8.0",
     "plotly.js-dist-min": "^4.1.2",

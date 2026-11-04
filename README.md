@@ -180,6 +180,15 @@ npm run test:unit     # SQL completion context, statement splitting, history ent
 npm test              # VS Code integration test (downloads a test build of VS Code once)
 ```
 
+The integration test opens `samples/` and needs `samples/demo.duckdb` (`python samples/make_sample_db.py`).
+CI (`.github/workflows/ci.yml`) runs all three on Windows and Linux.
+
+## Package
+
+```bash
+npm run package   # duckexplorer-<version>.vsix: a minified build, the Python kernel, README, CHANGELOG, LICENSE
+```
+
 ## Roadmap
 
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the

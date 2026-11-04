@@ -12,3 +12,8 @@ python/tests/**
 esbuild.mjs
 tsconfig.json
 node_modules/plotly.js-dist-min/**
+.github/**
+.claude/**
+.pytest_cache/**
+**/*.pyc
+.gitignore
