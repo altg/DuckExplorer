@@ -82,7 +82,7 @@
     "viewsWelcome": [
       {
         "view": "duckexplorer.schema",
-        "contents": "Attach a DuckDB database file to browse its schemas, tables and columns.\n[Add Database](command:duckexplorer.addDatabase)\n[New Notebook](command:duckexplorer.newNotebook)"
+        "contents": "Attach a DuckDB database file to browse its schemas, tables and columns.\n[Add Database](command:duckexplorer.addDatabase)\n[New Notebook](command:duckexplorer.newNotebook)\nTo query a CSV, Parquet, JSON or Excel file, right-click it in the Explorer and choose Open in DuckExplorer: it is listed here as a view in the files database."
       },
       {
         "view": "duckexplorer.history",
@@ -95,6 +95,17 @@
         "title": "Add Database…",
         "category": "DuckExplorer",
         "icon": "$(add)"
+      },
+      {
+        "command": "duckexplorer.openFiles",
+        "title": "Open in DuckExplorer",
+        "category": "DuckExplorer"
+      },
+      {
+        "command": "duckexplorer.closeFile",
+        "title": "Close File",
+        "category": "DuckExplorer",
+        "icon": "$(close)"
       },
       {
         "command": "duckexplorer.detachDatabase",
@@ -255,22 +266,22 @@
       "view/item/context": [
         {
           "command": "duckexplorer.previewTable",
-          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)/",
           "group": "inline"
         },
         {
           "command": "duckexplorer.showSummary",
-          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)/",
           "group": "1_main@1"
         },
         {
           "command": "duckexplorer.previewTable",
-          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)/",
           "group": "1_main@2"
         },
         {
           "command": "duckexplorer.exportTable",
-          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)$/",
+          "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)/",
           "group": "1_main@3"
         },
         {
@@ -286,6 +297,16 @@
         {
           "command": "duckexplorer.detachDatabase",
           "when": "view == duckexplorer.schema && viewItem == database.attached",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "duckexplorer.closeFile",
+          "when": "view == duckexplorer.schema && viewItem == view.file",
+          "group": "inline"
+        },
+        {
+          "command": "duckexplorer.closeFile",
+          "when": "view == duckexplorer.schema && viewItem == view.file",
           "group": "2_manage@1"
         },
         {
@@ -344,6 +365,14 @@
         },
         {
           "command": "duckexplorer.copyName",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.openFiles",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.closeFile",
           "when": "false"
         },
         {
@@ -416,6 +445,11 @@
           "command": "duckexplorer.runFile",
           "when": "resourceLangId == sql && config.duckexplorer.sqlFiles",
           "group": "duckexplorer@1"
+        },
+        {
+          "command": "duckexplorer.openFiles",
+          "when": "resourceScheme == file && resourceFilename =~ /\\.(duckdb|ddb|db|parquet|xlsx|(csv|tsv|json|jsonl|ndjson)(\\.(gz|zst))?)$/i",
+          "group": "duckexplorer@2"
         }
       ]
     },

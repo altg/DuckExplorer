@@ -57,6 +57,8 @@ class Server:
                 "alias": k.session.attach(p["path"], p.get("alias"), bool(p.get("readOnly", False)))
             },
             "detach": lambda p: k.session.detach(p["alias"]),
+            "openFile": lambda p: {"name": k.session.open_file(p["path"], p.get("name"))},
+            "closeFile": lambda p: k.session.close_file(p["name"]),
             "schema": lambda p: k.session.schema(),
             "sqlCatalog": lambda p: k.sql_catalog(p.get("notebook"), p.get("functionsVersion")),
             "summarize": lambda p: k.summarize(p["database"], p["schema"], p["name"]),

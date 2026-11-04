@@ -61,6 +61,18 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
   every row that matches the filter. **Refresh** reads the rows again. **Export…** on a table or view
   in the Databases view saves all of it.
 - **Preview Table** from the tree adds and runs `SELECT * … LIMIT 100` in the active notebook.
+- **Dropped files**: drag files from the Explorer (or your file manager) onto the Databases view, or
+  right-click them in the Explorer and choose **Open in DuckExplorer**. A `.duckdb`, `.ddb` or `.db`
+  file is attached read-write, as with **Add Database**. A `.csv`, `.tsv`, `.parquet`, `.json`,
+  `.jsonl`, `.ndjson` or `.xlsx` file (text formats may be `.gz` or `.zst` compressed) is listed
+  under **files**, an in-memory database with a view of each file named after it, so
+  `SELECT * FROM files.sales` reads `sales.csv`, and its summary opens. The views read the file
+  again for each query, so they see it change. Opened files are opened again when the kernel
+  restarts, until you close them (✕ on the view). Hold **Shift** while dropping files into a SQL
+  cell or a `.sql` file (VS Code opens them otherwise) to write SQL that reads them by path instead:
+  `SELECT * FROM 'data/sales.csv';` (or `ATTACH 'shop.duckdb';`) on an empty line, the quoted path
+  elsewhere, such as after `FROM` or in `read_csv(`, relative to the notebook's or file's folder.
+  The menu that appears after the drop switches between the two.
 - **.sql files**: **Ctrl+Enter** (or **Run** above a statement) runs the statement at the cursor,
   or the selected statements; **Ctrl+Shift+Enter** (or the Run button in the editor title, or
   **Run File** on a `.sql` file in the Explorer) runs the whole file, stopping at the first error.
@@ -142,6 +154,12 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 - A table summary loads the relation (or a 1,000,000-row reservoir sample) as a stored result,
   like a query's, so the summary panel reuses the notebook grid and Column Explorer. The panel
   is a webview that sends the grid's requests through the extension to the kernel.
+- An opened data file is `CREATE VIEW files.main.<name> AS SELECT * FROM '<absolute path>'`, in an
+  in-memory database the kernel attaches as `files`, so DuckDB picks the reader by the extension;
+  the view's comment holds the path. The extension keeps the list of opened files in workspace state
+  and opens them again, with the same names, after the attached databases when the kernel starts.
+  SQL written by a drop into an editor gets the path relative to the folder the SQL runs in when the
+  file is in it or in the same workspace folder, and absolute otherwise.
 - A sorted or filtered grid pages through row numbers that DuckDB selected and ordered once
   (NULLs last, ties in query order); the stored result and the `df` DataFrame keep every row in
   the query's order. Value filters compare the text the grid shows, so they match exactly what
@@ -183,9 +201,10 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
-Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view, summary panel),
-`src/notebook` (serializer, controller, grid requests, export), `src/sql` (SQL tokenizer, cursor
-context, completions and parameter hints; running `.sql` files and their results view),
+Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view and its drops, summary
+panel), `src/notebook` (serializer, controller, grid requests, export), `src/sql` (SQL tokenizer,
+cursor context, completions and parameter hints; dropped files as SQL; running `.sql` files and
+their results view),
 `src/history` (query history: entries, store, view),
 `src/renderer` (grid, filter bar and menus, Column Explorer, Plotly, the pages of the summary
 panel and results view), `python/duckexplorer_kernel` (kernel), `samples` (demo database
@@ -195,7 +214,7 @@ builder, notebook and `.sql` file).
 
 ```bash
 npm run test:python   # kernel: pytest
-npm run test:unit     # SQL completion context, statement splitting, history entries: mocha, without VS Code
+npm run test:unit     # SQL completion context, statement splitting, history entries, file paths: mocha, without VS Code
 npm test              # VS Code integration test (downloads a test build of VS Code once)
 ```
 
@@ -203,7 +222,7 @@ npm test              # VS Code integration test (downloads a test build of VS C
 
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
   grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions,
-  running `.sql` files, query history, export (CSV/Parquet/Excel). Next: drag-and-drop data
-  files, a "Chart this" builder, Altair/Vega-Lite output, streaming cell output.
+  running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and
+  data files. Next: streaming cell output, Altair/Vega-Lite output, a "Chart this" builder.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

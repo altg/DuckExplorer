@@ -10,7 +10,11 @@ import duckdb
 
 # Schemas DuckDB creates in every database that are noise in a schema browser.
 _HIDDEN_SCHEMAS = ("information_schema", "pg_catalog")
-_RESERVED_ALIASES = {"memory", "system", "temp", "main"}
+# The in-memory database that holds a view for each data file opened in the Databases view.
+FILES_DATABASE = "files"
+_RESERVED_ALIASES = {"memory", "system", "temp", "main", FILES_DATABASE}
+# Compression a text file's name may end with, after its format.
+_COMPRESSION = (".gz", ".zst")
 
 
 def quote_ident(name: str) -> str:
@@ -19,6 +23,14 @@ def quote_ident(name: str) -> str:
 
 def quote_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _file_stem(path: str) -> str:
+    """`sales` for sales.csv and sales.csv.gz."""
+    name = os.path.basename(path)
+    if name.lower().endswith(_COMPRESSION):
+        name = os.path.splitext(name)[0]
+    return os.path.splitext(name)[0]
 
 
 class Session:
@@ -93,6 +105,62 @@ class Session:
         self.con.execute(f"DETACH {quote_ident(alias)}")
         self.refresh_current_database()
 
+    # -- data files -----------------------------------------------------------------
+
+    def open_file(self, path: str, name: str | None = None) -> str:
+        """A data file (CSV, Parquet, JSON, Excel) as a view in the in-memory `files` database, named
+        after the file (or `name`, when it was open before a restart); returns the view's name. A file
+        that is open already keeps its view. The view's comment is the file's path."""
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"No such file: {path}")
+        self.con.execute(f"ATTACH IF NOT EXISTS ':memory:' AS {quote_ident(FILES_DATABASE)}")
+        (db_path,) = self.con.execute(
+            "SELECT path FROM duckdb_databases() WHERE database_name = $db", {"db": FILES_DATABASE}
+        ).fetchone()
+        if db_path:
+            raise ValueError(
+                f'A database attached as "{FILES_DATABASE}" ({db_path}) is in the way: detach it to open data files.'
+            )
+        views = self._file_views()
+        wanted = os.path.normcase(path)
+        for view, view_path in views.items():
+            if view_path and os.path.normcase(os.path.abspath(view_path)) == wanted:
+                return view
+        name = self._unique_name(name or _file_stem(path), {view.lower() for view in views} | self._file_tables())
+        qualified = f"{quote_ident(FILES_DATABASE)}.main.{quote_ident(name)}"
+        # DuckDB picks the reader by the file's extension, and reads the file again for each query.
+        self.con.execute(f"CREATE VIEW {qualified} AS SELECT * FROM {quote_literal(path)}")
+        self.con.execute(f"COMMENT ON VIEW {qualified} IS {quote_literal(path)}")
+        return name
+
+    def close_file(self, name: str) -> None:
+        self.con.execute(f"DROP VIEW IF EXISTS {quote_ident(FILES_DATABASE)}.main.{quote_ident(name)}")
+
+    def _file_views(self) -> dict[str, str | None]:
+        rows = self.con.execute(
+            "SELECT view_name, comment FROM duckdb_views() WHERE database_name = $db AND schema_name = 'main'",
+            {"db": FILES_DATABASE},
+        ).fetchall()
+        return dict(rows)
+
+    def _file_tables(self) -> set[str]:
+        rows = self.con.execute(
+            "SELECT table_name FROM duckdb_tables() WHERE database_name = $db AND schema_name = 'main'",
+            {"db": FILES_DATABASE},
+        ).fetchall()
+        return {row[0].lower() for row in rows}
+
+    @staticmethod
+    def _unique_name(stem: str, taken: set[str]) -> str:
+        base = re.sub(r"\W+", "_", stem).strip("_").lower() or "file"
+        if base[0].isdigit():
+            base = "file_" + base
+        name, n = base, 2
+        while name in taken:
+            name, n = f"{base}_{n}", n + 1
+        return name
+
     def _alias_for_path(self, path: str) -> str | None:
         wanted = os.path.normcase(path)
         for name, db_path in self.con.execute(
@@ -126,8 +194,9 @@ class Session:
                 SELECT database_name, path, readonly, type
                 FROM duckdb_databases()
                 WHERE NOT internal
-                ORDER BY database_oid
-                """
+                ORDER BY (database_name = $files AND path IS NULL), database_oid  -- opened files last
+                """,
+                {"files": FILES_DATABASE},
             ).fetchall()
             names = [row[0] for row in databases]
             current = {"current": self.current_database, "currentSchema": self.current_schema}

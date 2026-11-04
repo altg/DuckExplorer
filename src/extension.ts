@@ -1,6 +1,16 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { AttachedDatabases, qualifiedName, SchemaTreeProvider, TreeNode } from './explorer/schemaTree';
+import { DatabasesDropController } from './explorer/dropFiles';
+import {
+  AttachedDatabases,
+  FILES_DATABASE,
+  inFilesDatabase,
+  OpenedFiles,
+  qualifiedName,
+  SchemaTreeProvider,
+  TreeNode,
+} from './explorer/schemaTree';
 import { TableSummaryPanel } from './explorer/summaryPanel';
 import { HistoryEntry } from './history/entries';
 import { HistoryNode, QueryHistoryView } from './history/historyView';
@@ -13,11 +23,13 @@ import { openNotebookWith, runInNotebook } from './notebook/insert';
 import { DuckbookSerializer } from './notebook/serializer';
 import { SqlCatalog } from './sql/catalog';
 import { SqlLanguageFeatures, TRIGGER_CHARACTERS } from './sql/completion';
+import { SqlDropProvider } from './sql/drop';
+import { fileKind, READABLE } from './sql/files';
 import { quoteIdentifier } from './sql/identifiers';
 import { SqlResultsView } from './sql/resultsView';
 import { SqlFileRunner } from './sql/runner';
 
-/** Returned from activate() so integration tests can reach the kernel, tree, controller, summary, catalog, runner and history. */
+/** Returned from activate() so integration tests can reach the kernel, tree, controller, summary, catalog, runner, history and drops. */
 export interface DuckExplorerApi {
   kernel: KernelClient;
   tree: SchemaTreeProvider;
@@ -27,13 +39,18 @@ export interface DuckExplorerApi {
   runner: SqlFileRunner;
   history: QueryHistory;
   historyView: QueryHistoryView;
+  /** Files dropped on the Databases view. */
+  treeDrop: DatabasesDropController;
+  /** Files dropped into SQL cells and .sql files. */
+  sqlDrop: SqlDropProvider;
 }
 
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   const log = vscode.window.createOutputChannel('DuckExplorer', { log: true });
   const kernel = new KernelClient(context.extensionPath, log, kernelSettings);
   const attached = new AttachedDatabases(context.workspaceState);
-  const tree = new SchemaTreeProvider(kernel, attached);
+  const opened = new OpenedFiles(context.workspaceState);
+  const tree = new SchemaTreeProvider(kernel, attached, opened);
   const catalog = new SqlCatalog(kernel, log);
   // After anything that may add or drop tables, functions or DataFrames.
   const refreshNames = (soon = false) => {
@@ -61,6 +78,9 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     return entry && action(entry);
   };
   const sqlEditors: vscode.DocumentSelector = [{ notebookType: NOTEBOOK_TYPE, language: 'sql' }, ...sqlFiles];
+  const open = (files: vscode.Uri[]) => openFiles(files, kernel, attached, opened, summary, refreshNames);
+  const treeDrop = new DatabasesDropController(open);
+  const sqlDrop = new SqlDropProvider();
 
   context.subscriptions.push(
     log,
@@ -76,7 +96,8 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     vscode.languages.registerCodeLensProvider(sqlFiles, runner),
     vscode.window.registerWebviewViewProvider(SqlResultsView.id, runner.view, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new DuckbookSerializer(), DuckbookSerializer.options),
-    vscode.window.registerTreeDataProvider('duckexplorer.schema', tree),
+    vscode.window.createTreeView('duckexplorer.schema', { treeDataProvider: tree, dragAndDropController: treeDrop }),
+    vscode.languages.registerDocumentDropEditProvider(sqlEditors, sqlDrop, SqlDropProvider.metadata),
 
     kernel.onDidStart(async () => {
       for (const db of attached.list()) {
@@ -85,6 +106,20 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
         } catch (err) {
           log.warn(`Could not re-attach ${db.path}: ${(err as Error).message}`);
           void vscode.window.showWarningMessage(`DuckExplorer: could not re-attach ${path.basename(db.path)}: ${(err as Error).message}`);
+        }
+      }
+      for (const file of opened.list()) {
+        if (!fs.existsSync(file.path)) {
+          await opened.remove(file.path);
+          void vscode.window.showWarningMessage(`DuckExplorer: ${path.basename(file.path)} is gone, so ${FILES_DATABASE}.${file.name} was closed.`);
+          continue;
+        }
+        try {
+          const { name } = await kernel.request<{ name: string }>('openFile', { path: file.path, name: file.name });
+          if (name !== file.name) await opened.add({ path: file.path, name });
+        } catch (err) {
+          log.warn(`Could not open ${file.path} again: ${(err as Error).message}`);
+          void vscode.window.showWarningMessage(`DuckExplorer: could not open ${path.basename(file.path)} again: ${(err as Error).message}`);
         }
       }
       refreshNames();
@@ -103,6 +138,11 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     }),
 
     vscode.commands.registerCommand('duckexplorer.addDatabase', () => addDatabase(kernel, attached, refreshNames)),
+    // From the Explorer: the file clicked, and every file selected.
+    vscode.commands.registerCommand('duckexplorer.openFiles', (uri?: unknown, uris?: unknown) => {
+      const files = Array.isArray(uris) && uris.length ? uris : [uri];
+      return open(files.filter((file): file is vscode.Uri => file instanceof vscode.Uri));
+    }),
     vscode.commands.registerCommand('duckexplorer.detachDatabase', async (node?: TreeNode) => {
       if (node?.kind !== 'database' || !node.db.path) {
         return;
@@ -110,6 +150,19 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
       await attached.remove(node.db.path);
       try {
         await kernel.request('detach', { alias: node.db.name });
+      } catch (err) {
+        void vscode.window.showErrorMessage(`DuckExplorer: ${(err as Error).message}`);
+      }
+      refreshNames();
+    }),
+    vscode.commands.registerCommand('duckexplorer.closeFile', async (node?: TreeNode) => {
+      if (node?.kind !== 'relation' || !inFilesDatabase(node)) {
+        return;
+      }
+      const file = opened.list().find((entry) => entry.name === node.relation.name);
+      if (file) await opened.remove(file.path);
+      try {
+        await kernel.request('closeFile', { name: node.relation.name });
       } catch (err) {
         void vscode.window.showErrorMessage(`DuckExplorer: ${(err as Error).message}`);
       }
@@ -191,7 +244,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     vscode.commands.registerCommand('duckexplorer.clearHistory', () => historyView.clear()),
     vscode.commands.registerCommand('duckexplorer.searchHistory', () => historyView.search()),
   );
-  return { kernel, tree, controller, summary, catalog, runner, history, historyView };
+  return { kernel, tree, controller, summary, catalog, runner, history, historyView, treeDrop, sqlDrop };
 }
 
 export function deactivate(): void {
@@ -230,10 +283,19 @@ async function addDatabase(kernel: KernelClient, attached: AttachedDatabases, re
   } else {
     uris = await vscode.window.showOpenDialog({ defaultUri, filters, canSelectMany: true, openLabel: 'Attach' });
   }
-  if (!uris?.length) {
-    return;
+  if (uris?.length) {
+    await attachFiles(uris, choice.action === 'readonly', kernel, attached, refreshNames);
   }
-  const readOnly = choice.action === 'readonly';
+}
+
+/** Attaches database files and remembers them for the next kernel start. */
+async function attachFiles(
+  uris: readonly vscode.Uri[],
+  readOnly: boolean,
+  kernel: KernelClient,
+  attached: AttachedDatabases,
+  refreshNames: () => void,
+): Promise<void> {
   for (const uri of uris) {
     try {
       await vscode.window.withProgress(
@@ -248,4 +310,57 @@ async function addDatabase(kernel: KernelClient, attached: AttachedDatabases, re
     }
   }
   refreshNames();
+}
+
+/**
+ * Files dropped on the Databases view, or opened from the Explorer: database files are attached
+ * (read-write), and data files become views in the `files` database, all of them again at the next
+ * kernel start. The first data file's summary opens, as if it had been clicked in the tree.
+ */
+async function openFiles(
+  uris: readonly vscode.Uri[],
+  kernel: KernelClient,
+  attached: AttachedDatabases,
+  opened: OpenedFiles,
+  summary: TableSummaryPanel,
+  refreshNames: () => void,
+): Promise<void> {
+  const kindOf = (uri: vscode.Uri) => (uri.scheme === 'file' ? fileKind(uri.fsPath) : undefined);
+  const databases = uris.filter((uri) => kindOf(uri) === 'database');
+  const data = uris.filter((uri) => kindOf(uri) === 'data');
+  const others = uris.filter((uri) => !kindOf(uri)).map((uri) => path.basename(uri.fsPath));
+  if (others.length) {
+    void vscode.window.showWarningMessage(
+      `DuckExplorer can't open ${others.join(', ')}: it attaches .duckdb, .ddb and .db databases and reads ${READABLE} files.`,
+    );
+  }
+  if (databases.length) {
+    await attachFiles(databases, false, kernel, attached, refreshNames);
+  }
+  const views: { name: string; file: string }[] = [];
+  for (const uri of data) {
+    try {
+      const { name } = await vscode.window.withProgress(
+        { location: { viewId: 'duckexplorer.schema' }, title: `Opening ${path.basename(uri.fsPath)}` },
+        () => kernel.request<{ name: string }>('openFile', { path: uri.fsPath }),
+      );
+      await opened.add({ path: uri.fsPath, name });
+      views.push({ name, file: uri.fsPath });
+    } catch (err) {
+      void vscode.window.showErrorMessage(`DuckExplorer: could not open ${path.basename(uri.fsPath)}: ${(err as Error).message}`);
+    }
+  }
+  if (!views.length) {
+    return;
+  }
+  refreshNames();
+  const [first] = views;
+  await summary.show({
+    database: FILES_DATABASE,
+    schema: 'main',
+    name: first.name,
+    kind: 'view',
+    comment: first.file,
+    qualified: qualifiedName({ db: { name: FILES_DATABASE }, schema: { name: 'main' }, relation: first, current: false }),
+  });
 }

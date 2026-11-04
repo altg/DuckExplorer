@@ -39,6 +39,43 @@ export class AttachedDatabases {
   }
 }
 
+/** The in-memory database that holds a view of each data file opened in the Databases view. */
+export const FILES_DATABASE = 'files';
+
+export interface OpenedFile {
+  path: string;
+  /** Its view in the `files` database. */
+  name: string;
+}
+
+/** Data files the user opened in the Databases view, opened again (as the same views) whenever the kernel starts. */
+export class OpenedFiles {
+  private static readonly key = 'duckexplorer.files';
+
+  constructor(private readonly state: vscode.Memento) {}
+
+  list(): OpenedFile[] {
+    return this.state.get<OpenedFile[]>(OpenedFiles.key, []);
+  }
+
+  async add(entry: OpenedFile): Promise<void> {
+    const others = this.list().filter((file) => !samePath(file.path, entry.path));
+    await this.state.update(OpenedFiles.key, [...others, entry]);
+  }
+
+  async remove(filePath: string): Promise<void> {
+    await this.state.update(
+      OpenedFiles.key,
+      this.list().filter((file) => !samePath(file.path, filePath)),
+    );
+  }
+}
+
+/** Whether a node is in the `files` database (rather than one attached under that name). */
+export function inFilesDatabase(node: { db: DatabaseNode }): boolean {
+  return node.db.name === FILES_DATABASE && !node.db.path;
+}
+
 function samePath(a: string, b: string): boolean {
   const norm = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
   return norm(a) === norm(b);
@@ -53,6 +90,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   constructor(
     private readonly kernel: KernelClient,
     private readonly attached: AttachedDatabases,
+    private readonly opened: OpenedFiles,
   ) {}
 
   /** The last schema loaded, for completions and lookups. */
@@ -73,7 +111,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   async getChildren(node?: TreeNode): Promise<TreeNode[]> {
     if (!node) {
-      if (!this.kernel.isRunning && this.attached.list().length === 0) {
+      if (!this.kernel.isRunning && this.attached.list().length === 0 && this.opened.list().length === 0) {
         return []; // shows the welcome view
       }
       try {
@@ -119,23 +157,27 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     switch (node.kind) {
       case 'database': {
         const { db, current } = node;
-        const item = new vscode.TreeItem(db.name, current ? Expanded : Collapsed);
+        const files = inFilesDatabase(node);
+        const item = new vscode.TreeItem(db.name, current || files ? Expanded : Collapsed);
         item.id = `db:${db.name}`;
-        const parts = [db.path ? path.basename(db.path) : 'in-memory'];
+        const parts = [db.path ? path.basename(db.path) : files ? 'opened files' : 'in-memory'];
         if (db.readOnly) parts.push('read-only');
         if (current) parts.push('default');
         item.description = parts.join(' · ');
-        item.tooltip = new vscode.MarkdownString(
-          `**${db.name}**${current ? ' (default database)' : ''}\n\n${db.path ? `\`${db.path}\`` : 'In-memory database'}`,
-        );
-        item.iconPath = new vscode.ThemeIcon('database', current ? new vscode.ThemeColor('charts.yellow') : undefined);
+        const where = db.path
+          ? `\`${db.path}\``
+          : files
+            ? `A view of each data file dropped here or opened from the Explorer: \`SELECT * FROM ${FILES_DATABASE}.name\``
+            : 'In-memory database';
+        item.tooltip = new vscode.MarkdownString(`**${db.name}**${current ? ' (default database)' : ''}\n\n${where}`);
+        item.iconPath = new vscode.ThemeIcon(files ? 'files' : 'database', current ? new vscode.ThemeColor('charts.yellow') : undefined);
         item.contextValue = db.path ? 'database.attached' : 'database';
         return item;
       }
       case 'schema': {
         const item = new vscode.TreeItem(
           node.schema.name,
-          node.current && node.schema.name === 'main' ? Expanded : Collapsed,
+          (node.current || inFilesDatabase(node)) && node.schema.name === 'main' ? Expanded : Collapsed,
         );
         item.id = `db:${node.db.name}/s:${node.schema.name}`;
         item.description = `${node.schema.relations.length}`;
@@ -145,21 +187,29 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       }
       case 'relation': {
         const { relation } = node;
+        // A view of an opened data file: its comment is the file's path.
+        const file = inFilesDatabase(node) && relation.kind === 'view' && relation.comment ? relation.comment : undefined;
         const item = new vscode.TreeItem(relation.name, Collapsed);
         item.id = `db:${node.db.name}/s:${node.schema.name}/r:${relation.name}`;
-        item.description =
-          relation.kind === 'view'
+        item.description = file
+          ? path.basename(file)
+          : relation.kind === 'view'
             ? 'view'
             : relation.rowEstimate != null
               ? `${relation.rowEstimate.toLocaleString()} rows`
               : undefined;
         const tooltip = new vscode.MarkdownString(
-          `**${qualifiedName(node)}** — ${relation.kind}, ${relation.columns.length} columns`,
+          `**${qualifiedName(node)}** — ${file ? 'view of a file' : relation.kind}, ${relation.columns.length} columns`,
         );
-        if (relation.comment) tooltip.appendMarkdown(`\n\n${relation.comment}`);
+        if (file) {
+          tooltip.appendMarkdown('\n\n');
+          tooltip.appendText(file);
+        } else if (relation.comment) {
+          tooltip.appendMarkdown(`\n\n${relation.comment}`);
+        }
         item.tooltip = tooltip;
-        item.iconPath = new vscode.ThemeIcon(relation.kind === 'view' ? 'eye' : 'table');
-        item.contextValue = relation.kind;
+        item.iconPath = new vscode.ThemeIcon(file ? 'file' : relation.kind === 'view' ? 'eye' : 'table');
+        item.contextValue = file ? 'view.file' : relation.kind;
         // A click shows the summary; the twistie still lists the columns.
         item.command = { command: 'duckexplorer.showSummary', title: 'Show Summary', arguments: [node] };
         return item;
@@ -196,7 +246,12 @@ function columnIcon(type: string): string {
 }
 
 /** Shortest name that resolves to the relation: drops the default database and the main schema. */
-export function qualifiedName(node: { db: DatabaseNode; schema: SchemaNode; relation: RelationNode; current: boolean }): string {
+export function qualifiedName(node: {
+  db: Pick<DatabaseNode, 'name'>;
+  schema: Pick<SchemaNode, 'name'>;
+  relation: Pick<RelationNode, 'name'>;
+  current: boolean;
+}): string {
   const parts: string[] = [];
   if (!node.current) parts.push(node.db.name);
   if (node.schema.name !== 'main' || !node.current) parts.push(node.schema.name);
