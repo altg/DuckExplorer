@@ -1,8 +1,9 @@
 import type { ActivationFunction } from 'vscode-notebook-renderer';
-import { PLOTLY_MIME, TABLE_MIME, type TableResult } from '../kernel/protocol';
+import { PLOTLY_MIME, TABLE_MIME, type TableResult, VEGALITE_MIME } from '../kernel/protocol';
 import { HostClient } from './client';
 import { ResultGrid } from './grid';
 import css from './styles.css';
+import { el } from './util';
 
 export const activate: ActivationFunction = (context) => {
   const host = new HostClient(context);
@@ -22,16 +23,19 @@ export const activate: ActivationFunction = (context) => {
       if (item.mime === TABLE_MIME) {
         new ResultGrid(element, item.json() as TableResult, host, controller.signal);
       } else if (item.mime === PLOTLY_MIME) {
-        const container = document.createElement('div');
-        container.className = 'dx-plot';
+        const container = el('div', 'dx-plot');
         element.append(container);
         const figure = item.json();
         import('./plotly')
           .then(({ renderPlotly }) => (controller.signal.aborted ? undefined : renderPlotly(container, figure, controller.signal)))
-          .catch((err: unknown) => {
-            container.className = 'dx-plot-error';
-            container.textContent = `Could not render the Plotly figure: ${err instanceof Error ? err.message : String(err)}`;
-          });
+          .catch((err: unknown) => showError(container, 'Could not render the Plotly figure', err));
+      } else if (item.mime === VEGALITE_MIME) {
+        const container = el('div', 'dx-vega');
+        element.append(container);
+        const spec = item.json();
+        import('./vegalite')
+          .then(({ renderVegaLite }) => (controller.signal.aborted ? undefined : renderVegaLite(container, spec, controller.signal)))
+          .catch((err: unknown) => showError(container, 'Could not render the chart', err));
       }
     },
     disposeOutputItem(id) {
@@ -45,3 +49,8 @@ export const activate: ActivationFunction = (context) => {
     },
   };
 };
+
+function showError(container: HTMLElement, what: string, err: unknown): void {
+  container.className = 'dx-plot-error';
+  container.textContent = `${what}: ${err instanceof Error ? err.message : String(err)}`;
+}

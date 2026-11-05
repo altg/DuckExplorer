@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { KernelOutput, OutputUpdate, PLOTLY_MIME, TABLE_MIME } from '../kernel/protocol';
+import { KernelOutput, OutputUpdate, PLOTLY_MIME, TABLE_MIME, VEGALITE_MIME } from '../kernel/protocol';
 
 export function toCellOutput(output: KernelOutput): vscode.NotebookCellOutput {
   switch (output.type) {
@@ -15,6 +15,8 @@ export function toCellOutput(output: KernelOutput): vscode.NotebookCellOutput {
       return new vscode.NotebookCellOutput([new vscode.NotebookCellOutputItem(Buffer.from(output.data, 'base64'), 'image/png')]);
     case 'plotly':
       return new vscode.NotebookCellOutput([new vscode.NotebookCellOutputItem(Buffer.from(output.json, 'utf8'), PLOTLY_MIME)]);
+    case 'vegalite':
+      return new vscode.NotebookCellOutput([new vscode.NotebookCellOutputItem(Buffer.from(output.json, 'utf8'), VEGALITE_MIME)]);
   }
 }
 

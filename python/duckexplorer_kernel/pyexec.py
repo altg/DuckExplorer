@@ -7,7 +7,10 @@ import base64
 import importlib.abc
 import importlib.machinery
 import io
+import json
 import linecache
+import math
+import re
 import sys
 import threading
 import time
@@ -148,6 +151,9 @@ def to_output(obj: Any, table_output: Callable[[Any], dict | None]) -> dict | No
         return table
     if module.startswith("plotly") and hasattr(obj, "to_plotly_json"):
         return {"type": "plotly", "json": obj.to_json()}
+    if module.startswith("altair") and hasattr(obj, "to_json") and hasattr(obj, "to_dict"):
+        # Every top-level chart (Chart, LayerChart, HConcatChart, …); to_dict() validates it.
+        return vegalite_output(obj.to_dict())
     if module.startswith("matplotlib"):
         figure = obj if type(obj).__name__ == "Figure" else None
         if figure is not None:
@@ -156,6 +162,9 @@ def to_output(obj: Any, table_output: Callable[[Any], dict | None]) -> dict | No
             return output
         # Axes, Line2D, …: the figure itself is emitted when the cell finishes.
         return None
+    spec = _vegalite_bundle(obj)
+    if spec is not None:
+        return vegalite_output(spec)
     repr_html = getattr(obj, "_repr_html_", None)
     if callable(repr_html) and not isinstance(obj, type):
         try:
@@ -168,6 +177,44 @@ def to_output(obj: Any, table_output: Callable[[Any], dict | None]) -> dict | No
     if len(text) > MAX_TEXT_OUTPUT:
         text = text[:MAX_TEXT_OUTPUT] + f"\n… ({len(text) - MAX_TEXT_OUTPUT} more characters)"
     return {"type": "text", "text": text}
+
+
+def vegalite_output(spec: dict) -> dict:
+    """A Vega-Lite spec as an output, in strict JSON: NaN and ±inf, which Python's json writes as bare
+    NaN/Infinity, become null (Altair leaves the NaN of NULLs in pandas' string columns in its data)."""
+    return {"type": "vegalite", "json": json.dumps(_finite(spec), allow_nan=False, default=str)}
+
+
+def _finite(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _finite(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(item) for item in value]
+    return value
+
+
+def _vegalite_bundle(obj: Any) -> dict | None:
+    """The Vega-Lite spec in an object's rich display bundle (as Jupyter shows it), if it has one."""
+    repr_bundle = getattr(obj, "_repr_mimebundle_", None)
+    if not callable(repr_bundle) or isinstance(obj, type):
+        return None
+    try:
+        bundle = repr_bundle()
+    except Exception:
+        return None
+    if isinstance(bundle, tuple):  # (data, metadata)
+        bundle = bundle[0] if bundle else None
+    if not isinstance(bundle, dict):
+        return None
+    for mime, spec in bundle.items():
+        if isinstance(mime, str) and _VEGALITE_MIME.match(mime) and isinstance(spec, dict):
+            return spec
+    return None
+
+
+_VEGALITE_MIME = re.compile(r"^application/vnd\.vegalite\.v\d+\+json$")
 
 
 # -- matplotlib --------------------------------------------------------------------
@@ -225,6 +272,9 @@ def _apply_plotly_theme() -> None:
 
 def _patch_plotly(module: Any) -> None:
     base = module.BaseFigure
+    if getattr(base, "_duckexplorer_patched", False):
+        return
+    base._duckexplorer_patched = True
 
     def show(self: Any, *args: Any, **kwargs: Any) -> None:
         if current is not None:
@@ -240,13 +290,30 @@ def _patch_plotly(module: Any) -> None:
     base._initialize_layout_template = initialize_layout_template
 
 
-class _PlotlyHook(importlib.abc.MetaPathFinder):
-    """Patches plotly as soon as it is imported, without importing plotly up front."""
+# -- altair ------------------------------------------------------------------------
+
+
+def _patch_altair(module: Any) -> None:
+    """chart.show() draws the chart in the running cell (Altair would want IPython or a browser)."""
+    base = getattr(module, "TopLevelMixin", None)
+    if base is None:
+        return
+
+    def show(self: Any, *args: Any, **kwargs: Any) -> None:
+        if current is not None:
+            current.add(vegalite_output(self.to_dict()))
+
+    base.show = show
+
+
+class _ImportHook(importlib.abc.MetaPathFinder):
+    """Patches plotly and altair as soon as they are imported, without importing them up front."""
 
     targets: dict[str, Callable[[Any], None]] = {
         "plotly.basedatatypes": _patch_plotly,
         # plotly.express reads the default template before building a figure.
         "plotly.io": lambda module: _apply_plotly_theme(),
+        "altair": _patch_altair,
     }
 
     def find_spec(self, fullname, path, target=None):  # type: ignore[override]
@@ -268,10 +335,12 @@ class _PlotlyHook(importlib.abc.MetaPathFinder):
 
 
 def install_hooks() -> None:
-    if "plotly.basedatatypes" in sys.modules:
-        _patch_plotly(sys.modules["plotly.basedatatypes"])
-    elif not any(isinstance(f, _PlotlyHook) for f in sys.meta_path):
-        sys.meta_path.insert(0, _PlotlyHook())
+    # Modules imported already (tests make several kernels in one process) are patched now.
+    for name, patch in _ImportHook.targets.items():
+        if name in sys.modules:
+            patch(sys.modules[name])
+    if not any(isinstance(f, _ImportHook) for f in sys.meta_path):
+        sys.meta_path.insert(0, _ImportHook())
 
 
 # -- running code ------------------------------------------------------------------

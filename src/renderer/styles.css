@@ -651,6 +651,13 @@
   white-space: pre-wrap;
 }
 
+/* Vega-Lite charts: wide ones scroll rather than overflow the output. */
+.dx-vega {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
 /* -- Buttons (summary panel, results view) -------------------------------------- */
 
 .dx-button {

@@ -2,7 +2,7 @@
 
 A DuckDB UI-style analysis workspace inside VS Code. Attach DuckDB databases, browse their
 schemas, run SQL in notebooks, scroll through large results, and chart them with Python
-(Plotly or Matplotlib) in the same notebook.
+(Plotly, Altair or Matplotlib) in the same notebook.
 
 ## Features (milestone 1)
 
@@ -50,8 +50,9 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
   - Python helpers: `con` (the DuckDB connection), `sql("…")` → DataFrame, `display(obj)`.
   - Output shows while a cell runs: printed lines, `display()`, `plt.show()` and `fig.show()` appear
     as they happen (a loop of prints a few times a second), not only when the cell is done.
-  - Charts: Plotly figures render interactively; Matplotlib/Seaborn figures render as PNGs
-    (`plt.show()` or the end of the cell). Plotly follows the VS Code light/dark theme.
+  - Charts: Plotly figures render interactively; Altair charts (and anything else that displays as
+    Vega-Lite) render with Vega-Lite, including `chart.show()`; Matplotlib/Seaborn figures render as
+    PNGs (`plt.show()` or the end of the cell). Plotly and Altair follow the VS Code light/dark theme.
   - A DataFrame or DuckDB relation as the last expression of a Python cell renders as a grid.
   - Relative paths (`ATTACH 'x.duckdb'`, `read_csv('data.csv')`) resolve against the notebook's
     folder. Stop runs with the notebook's Interrupt button.
@@ -101,11 +102,11 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
 ## Requirements
 
 - VS Code 1.100+
-- Python 3.10+ with `duckdb` and `pyarrow` (required), and `pandas`, `matplotlib`, `plotly`
-  (optional, for DataFrames and charts):
+- Python 3.10+ with `duckdb` and `pyarrow` (required), and `pandas`, `matplotlib`, `plotly`,
+  `altair` (optional, for DataFrames and charts):
 
   ```bash
-  python -m pip install duckdb pyarrow pandas matplotlib plotly
+  python -m pip install duckdb pyarrow pandas matplotlib plotly altair
   ```
 
   The kernel uses the `duckexplorer.pythonPath` setting, else the interpreter selected in the
@@ -145,7 +146,7 @@ VS Code extension host (TypeScript)          Python kernel (python -m duckexplor
  ├─ .duckbook serializer  │  JSON lines        ├─ Result store: recent results kept as Arrow tables
  ├─ Notebook controller  ─┼─ over stdio  ────► ├─ SQL cells → first page; more pages on request
  └─ Renderer messaging  ──┘                    └─ Python cells: per-notebook namespaces, output capture
-Notebook renderer (webview): results grid + Plotly (loaded on demand)
+Notebook renderer (webview): results grid + Plotly and Vega-Lite (loaded on demand)
 ```
 
 - One kernel process owns the DuckDB connection, so SQL and Python share one session, and
@@ -229,6 +230,6 @@ npm test              # VS Code integration test (downloads a test build of VS C
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
   grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions,
   running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and
-  data files, streaming cell output. Next: Altair/Vega-Lite output, a "Chart this" builder.
+  data files, streaming cell output, Altair/Vega-Lite output. Next: a "Chart this" builder.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

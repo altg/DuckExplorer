@@ -5,6 +5,8 @@ export const NOTEBOOK_TYPE = 'duckexplorer-notebook';
 export const RENDERER_ID = 'duckexplorer-renderer';
 export const TABLE_MIME = 'application/vnd.duckexplorer.table+json';
 export const PLOTLY_MIME = 'application/vnd.duckexplorer.plotly+json';
+/** A Vega-Lite spec (Altair charts). */
+export const VEGALITE_MIME = 'application/vnd.duckexplorer.vegalite+json';
 
 export interface ColumnInfo {
   name: string;
@@ -33,7 +35,8 @@ export type KernelOutput =
   | { type: 'html'; html: string }
   | { type: 'table'; table: TableResult }
   | { type: 'png'; data: string }
-  | { type: 'plotly'; json: string };
+  | { type: 'plotly'; json: string }
+  | { type: 'vegalite'; json: string };
 
 export interface KernelError {
   ename: string;
@@ -87,6 +90,7 @@ export interface KernelInfo {
   pandas: string | null;
   matplotlib: string | null;
   plotly: string | null;
+  altair: string | null;
 }
 
 export interface ColumnNode {

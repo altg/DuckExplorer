@@ -72,6 +72,7 @@ class Kernel:
             "pandas": version_of("pandas"),
             "matplotlib": version_of("matplotlib"),
             "plotly": version_of("plotly"),
+            "altair": version_of("altair"),
         }
 
     def configure(self, params: dict) -> None:

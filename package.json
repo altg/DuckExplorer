@@ -39,7 +39,8 @@
         "entrypoint": "./dist/renderer.js",
         "mimeTypes": [
           "application/vnd.duckexplorer.table+json",
-          "application/vnd.duckexplorer.plotly+json"
+          "application/vnd.duckexplorer.plotly+json",
+          "application/vnd.duckexplorer.vegalite+json"
         ],
         "requiresMessaging": "optional"
       }
@@ -538,6 +539,10 @@
     "esbuild": "^0.28.2",
     "mocha": "^11.8.0",
     "plotly.js-dist-min": "^4.1.2",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vega": "^6.4.0",
+    "vega-embed": "^7.3.0",
+    "vega-interpreter": "^2.3.2",
+    "vega-lite": "^6.5.0"
   }
 }

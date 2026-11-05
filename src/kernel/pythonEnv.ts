@@ -49,14 +49,14 @@ export async function reportStartupFailure(python: string, stderr: string): Prom
   const choose = 'Select interpreter';
   const showLog = 'Show log';
   const message = missing
-    ? `DuckExplorer: the Python package '${missing}' is missing from ${python}. The kernel needs duckdb and pyarrow (pandas, matplotlib and plotly are optional).`
+    ? `DuckExplorer: the Python package '${missing}' is missing from ${python}. The kernel needs duckdb and pyarrow (pandas, matplotlib, plotly and altair are optional).`
     : `DuckExplorer: the kernel failed to start with ${python}.`;
   const choice = await vscode.window.showErrorMessage(message, install, choose, showLog);
   if (choice === install) {
     const terminal = vscode.window.createTerminal('DuckExplorer: install packages');
     terminal.show();
     const quoted = !python.includes(' ') ? python : process.platform === 'win32' ? `& "${python}"` : `"${python}"`;
-    terminal.sendText(`${quoted} -m pip install --upgrade duckdb pyarrow pandas matplotlib plotly`);
+    terminal.sendText(`${quoted} -m pip install --upgrade duckdb pyarrow pandas matplotlib plotly altair`);
   } else if (choice === choose) {
     await vscode.commands.executeCommand('python.setInterpreter');
   } else if (choice === showLog) {

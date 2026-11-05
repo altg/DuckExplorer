@@ -134,6 +134,54 @@ def test_plotly_follows_theme(kernel):
     assert template["layout"]["paper_bgcolor"] == "rgb(17,17,17)"
 
 
+def test_altair_charts_render_as_vega_lite(kernel):
+    pytest.importorskip("altair")
+    code = (
+        "import altair as alt, pandas as pd\n"
+        "data = pd.DataFrame({'x': ['a', 'b'], 'y': [1, 2]})\n"
+        "bars = alt.Chart(data).mark_bar().encode(x='x', y='y')\n"
+        "bars.show()\n"
+        "bars + bars.mark_text()"
+    )
+    outputs = outputs_of(kernel.execute_python("nb", code))
+    assert [o["type"] for o in outputs] == ["vegalite", "vegalite"]
+    shown, layered = (json.loads(o["json"]) for o in outputs)
+    assert shown["$schema"].startswith("https://vega.github.io/schema/vega-lite/")
+    assert shown["mark"] == {"type": "bar"}
+    [values] = shown["datasets"].values()
+    assert values == [{"x": "a", "y": 1}, {"x": "b", "y": 2}]
+    assert len(layered["layer"]) == 2
+
+
+def test_vega_lite_output_is_strict_json(kernel):
+    pytest.importorskip("altair")
+    kernel.execute_sql("nb", "SELECT * FROM (VALUES ('a', 1.5), (NULL, 'inf'::DOUBLE)) t(s, v)")
+    code = "import altair as alt\nchart = alt.Chart(df).mark_bar().encode(x='s:N', y='v:Q')\nchart.show()\nchart"
+    outputs = outputs_of(kernel.execute_python("nb", code))
+    assert [o["type"] for o in outputs] == ["vegalite", "vegalite"]
+    for output in outputs:
+        assert "NaN" not in output["json"] and "Infinity" not in output["json"]
+        [data] = json.loads(output["json"])["datasets"].values()
+        assert data == [{"s": "a", "v": 1.5}, {"s": None, "v": None}]
+
+
+def test_invalid_altair_chart_is_an_error(kernel):
+    pytest.importorskip("altair")
+    response = kernel.execute_python("nb", "import altair as alt\nalt.Chart().mark_bar(opacity='high')")
+    assert response["error"]["ename"] == "SchemaValidationError"
+
+
+def test_objects_with_a_vega_lite_bundle_render_as_vega_lite(kernel):
+    code = (
+        "class Spec:\n"
+        "    def _repr_mimebundle_(self, include=None, exclude=None):\n"
+        "        return {'application/vnd.vegalite.v5+json': {'mark': 'point'}, 'text/plain': 'Spec'}\n"
+        "Spec()"
+    )
+    [output] = outputs_of(kernel.execute_python("nb", code))
+    assert output == {"type": "vegalite", "json": '{"mark": "point"}'}
+
+
 def test_python_error_traceback_shows_user_frames(kernel):
     response = kernel.execute_python("nb", "def f():\n    return 1 / 0\nf()")
     error = response["error"]

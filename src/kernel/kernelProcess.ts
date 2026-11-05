@@ -230,7 +230,7 @@ export class KernelClient implements vscode.Disposable {
       this.failed = false;
       this.log.info(
         `Kernel ready: Python ${info.python}, duckdb ${info.duckdb}, pyarrow ${info.pyarrow}, ` +
-          `pandas ${info.pandas ?? '-'}, matplotlib ${info.matplotlib ?? '-'}, plotly ${info.plotly ?? '-'}`,
+          `pandas ${info.pandas ?? '-'}, matplotlib ${info.matplotlib ?? '-'}, plotly ${info.plotly ?? '-'}, altair ${info.altair ?? '-'}`,
       );
       await this.send('configure', this.configure());
       this.updateStatus();
