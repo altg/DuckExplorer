@@ -73,6 +73,8 @@ suite('DuckExplorer .sql files', () => {
     assert.strictEqual(current.type, 'result');
     assert.strictEqual(current.result.table.id, grouped.table.id);
     assert.strictEqual(current.source.label, 'queries.sql:5');
+    // The view's page (a module script and its chunks) runs: it says it is ready.
+    await waitFor(() => (api.runner.view as any).ready === true, 30_000, 'the results page to load');
   });
 
   test('Export under the results view writes its rows to a file', async () => {

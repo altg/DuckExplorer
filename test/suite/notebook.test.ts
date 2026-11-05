@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 const SAMPLES = path.resolve(__dirname, '..', '..', 'samples');
 const TABLE_MIME = 'application/vnd.duckexplorer.table+json';
 const PLOTLY_MIME = 'application/vnd.duckexplorer.plotly+json';
+const VEGALITE_MIME = 'application/vnd.duckexplorer.vegalite+json';
 
 async function waitFor(condition: () => boolean, timeoutMs: number, what: string): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -67,10 +68,11 @@ suite('DuckExplorer notebook', () => {
       ['python', ['image/png']],
       ['python', [TABLE_MIME]],
       ['sql', [TABLE_MIME]],
+      ['python', [VEGALITE_MIME]],
       ['sql', [TABLE_MIME]],
     ]);
 
-    const big = JSON.parse(Buffer.from(codeCells[7].outputs[0].items[0].data).toString('utf8'));
+    const big = JSON.parse(Buffer.from(codeCells[8].outputs[0].items[0].data).toString('utf8'));
     assert.strictEqual(big.rowCount, 300_107);
     assert.strictEqual(big.rows.length, big.pageSize);
 
@@ -101,6 +103,38 @@ suite('DuckExplorer notebook', () => {
       cell.outputs.map((o) => o.items.map((i) => [i.mime, Buffer.from(i.data).toString('utf8')])),
       [[['application/vnd.code.notebook.stdout', 'first\nsecond\n']], [['text/plain', '42']]],
     );
+  });
+
+  test('a chart from the Chart view becomes a Python cell below the result', async () => {
+    const api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    const source = "SELECT 'kind ' || (range % 4) AS kind, range AS amount FROM range(100)";
+    const notebook = await vscode.workspace.openNotebookDocument(
+      'duckexplorer-notebook',
+      new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, source, 'sql')]),
+    );
+    const editor = await vscode.window.showNotebookDocument(notebook);
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+    await waitFor(() => notebook.cellAt(0).executionSummary?.success !== undefined, 60_000, 'the cell to finish');
+    const table = JSON.parse(Buffer.from(notebook.cellAt(0).outputs[0].items[0].data).toString('utf8'));
+
+    const filter = { conditions: [{ column: 0, op: 'ne', value: 'kind 3' }] };
+    const preview = await api.kernel.request('chartSpec', { resultId: table.id, filter });
+    assert.deepStrictEqual(preview.chart, { mark: 'bar', x: 0, y: 1, aggregate: 'sum', color: null, timeUnit: 'none' });
+    assert.deepStrictEqual(
+      preview.spec.data.values.map((v: any) => [v.kind, v.amount]),
+      [['kind 2', 1250], ['kind 1', 1225], ['kind 0', 1200]],
+    );
+
+    await api.controller.insertChartCell(editor, { type: 'insertChartCell', requestId: 0, resultId: table.id, chart: preview.chart, filter });
+    const added = notebook.cellAt(1);
+    assert.strictEqual(added.document.languageId, 'python');
+    assert.match(added.document.getText(), /^import altair as alt\n/);
+    assert.match(added.document.getText(), /WHERE kind IS DISTINCT FROM 'kind 3'/);
+    await waitFor(() => added.executionSummary?.success !== undefined, 60_000, 'the chart cell to run');
+    assert.strictEqual(added.executionSummary?.success, true, describeFailure(added));
+    assert.deepStrictEqual(mimes(added), [VEGALITE_MIME]);
+    const spec = JSON.parse(Buffer.from(added.outputs[0].items[0].data).toString('utf8'));
+    assert.deepStrictEqual(Object.values(spec.datasets)[0], preview.spec.data.values);
   });
 
   test('a SQL error is reported on the cell', async () => {
@@ -336,6 +370,8 @@ suite('DuckExplorer notebook', () => {
 
       await vscode.commands.executeCommand(command!.command, ...(command!.arguments ?? []));
       await waitFor(() => api.summary.current?.type === 'summary', 30_000, 'the summary');
+      // The panel's page (a module script and its chunks) runs: it says it is ready.
+      await waitFor(() => (api.summary as any).ready === true, 30_000, 'the summary page to load');
       const { relation, table } = api.summary.current;
       assert.deepStrictEqual([relation.database, relation.name, relation.kind], [alias, 'items', 'table']);
       assert.strictEqual(table.rowCount, 50);

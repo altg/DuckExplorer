@@ -5,7 +5,7 @@ import { QueryHistory } from '../history/queryHistory';
 import { KernelClient } from '../kernel/kernelProcess';
 import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, RENDERER_ID, TABLE_MIME, TableResult } from '../kernel/protocol';
 import { ExportChoice, Exported, exportRows, ExportSource } from './export';
-import { answerGridRequest, ExportResult, InsertFilteredCell, isGridRequest } from './gridRequests';
+import { answerGridRequest, chartCell, ExportResult, InsertChartCell, InsertFilteredCell, isGridRequest } from './gridRequests';
 import { errorOutput, LiveOutputs } from './outputs';
 
 interface QueuedCell {
@@ -149,6 +149,7 @@ export class DuckbookController implements vscode.Disposable {
     if (isGridRequest(message)) {
       const response = await answerGridRequest(this.kernel, message, {
         insertFilteredCell: (request) => this.insertFilteredCell(editor, request),
+        insertChartCell: (request) => this.insertChartCell(editor, request),
         exportResult: (request) => this.exportResult(editor, request),
       });
       await this.messaging.postMessage(response, editor);
@@ -160,23 +161,46 @@ export class DuckbookController implements vscode.Disposable {
    * filter and sort (the kernel rewrites the query), and runs it.
    */
   async insertFilteredCell(editor: vscode.NotebookEditor, { resultId, filter, sort }: InsertFilteredCell): Promise<{}> {
-    const source = editor.notebook.getCells().find((cell) => tableIn(cell, resultId));
-    if (!source) {
-      throw new Error('the cell that made this result was run again or removed.');
-    }
-    if (source.document.languageId !== 'sql') {
-      throw new Error('only results of SQL cells can be rerun as a query.');
-    }
+    const source = this.sqlCellOf(editor, resultId, 'rerun as a query');
     const { code } = await this.kernel.request<{ code: string }>('filteredQuery', {
       resultId,
       code: source.document.getText(),
       filter,
       sort,
     });
+    await this.insertBelow(editor, source, code, 'sql');
+    return {};
+  }
+
+  /**
+   * "New cell" in a result's Chart view: a Python cell below the result's own that draws the chart (with
+   * Altair, else Plotly) over the cell's query, filtered like the grid, and runs it.
+   */
+  async insertChartCell(editor: vscode.NotebookEditor, request: InsertChartCell): Promise<{}> {
+    const source = this.sqlCellOf(editor, request.resultId, 'kept as a chart');
+    const code = await chartCell(this.kernel, request, source.document.getText());
+    await this.insertBelow(editor, source, code, 'python');
+    return {};
+  }
+
+  /** The SQL cell whose output shows the result. */
+  private sqlCellOf(editor: vscode.NotebookEditor, resultId: string, what: string): vscode.NotebookCell {
+    const source = editor.notebook.getCells().find((cell) => tableIn(cell, resultId));
+    if (!source) {
+      throw new Error('the cell that made this result was run again or removed.');
+    }
+    if (source.document.languageId !== 'sql') {
+      throw new Error(`only results of SQL cells can be ${what}.`);
+    }
+    return source;
+  }
+
+  /** Adds a cell below `source`, selects it and runs it. */
+  private async insertBelow(editor: vscode.NotebookEditor, source: vscode.NotebookCell, text: string, language: 'sql' | 'python'): Promise<void> {
     const index = source.index + 1;
     const edit = new vscode.WorkspaceEdit();
     edit.set(editor.notebook.uri, [
-      vscode.NotebookEdit.insertCells(index, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, code, 'sql')]),
+      vscode.NotebookEdit.insertCells(index, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, text, language)]),
     ]);
     if (!(await vscode.workspace.applyEdit(edit))) {
       throw new Error('the notebook could not be edited.');
@@ -185,7 +209,6 @@ export class DuckbookController implements vscode.Disposable {
     editor.selection = range;
     editor.revealRange(range, vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
     this.enqueue([editor.notebook.cellAt(index)]);
-    return {};
   }
 
   /** "Export" under a result: its rows as the grid shows them, to a file (by default beside the notebook). */

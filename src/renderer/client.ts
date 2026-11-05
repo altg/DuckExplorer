@@ -1,5 +1,5 @@
 import type { RendererContext } from 'vscode-notebook-renderer';
-import type { FilterSpec, RendererRequest, RendererResponse, RendererResults, SortSpec } from '../kernel/protocol';
+import type { ChartConfig, FilterSpec, RendererRequest, RendererResponse, RendererResults, SortSpec } from '../kernel/protocol';
 
 type Reply<T> = { result: T; error?: undefined } | { result?: undefined; error: 'expired' | string };
 
@@ -45,6 +45,14 @@ export class HostClient {
 
   exportResult(resultId: string, filter?: FilterSpec, sort?: SortSpec): Promise<Reply<RendererResults['exportResult']>> {
     return this.request({ type: 'exportResult', requestId: 0, resultId, filter, sort });
+  }
+
+  chartSpec(resultId: string, chart?: Partial<ChartConfig>, filter?: FilterSpec): Promise<Reply<RendererResults['chartSpec']>> {
+    return this.request({ type: 'chartSpec', requestId: 0, resultId, chart, filter });
+  }
+
+  insertChartCell(resultId: string, chart: ChartConfig, filter?: FilterSpec): Promise<Reply<RendererResults['insertChartCell']>> {
+    return this.request({ type: 'insertChartCell', requestId: 0, resultId, chart, filter });
   }
 
   private request<T>(request: RendererRequest): Promise<Reply<T>> {

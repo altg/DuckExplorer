@@ -19,6 +19,7 @@ import duckdb
 import pyarrow as pa
 
 from . import catalog, export, pyexec, script
+from .filters import InvalidFilter
 from .results import ResultStore, StoredResult
 from .session import Session, quote_ident
 
@@ -300,6 +301,19 @@ class Kernel:
             if functions_version is None or functions_version != catalog.functions_version(side):
                 result["functions"] = catalog.function_catalog(side)
         return result
+
+    def chart_spec(self, result_id: str, chart: dict | None = None, filter_spec: dict | None = None) -> dict:
+        return self.results.chart(result_id, chart, filter_spec)
+
+    def chart_code(self, result_id: str, code: str, chart: dict, filter_spec: dict | None = None) -> dict:
+        """The chart as a Python cell: Altair when it is installed (the Chart view draws with Vega-Lite
+        too), else Plotly."""
+        library = next((name for name in ("altair", "plotly") if importlib.util.find_spec(name) is not None), None)
+        if library is None:
+            raise InvalidFilter(
+                "Keeping the chart needs Altair or Plotly in the kernel's Python: python -m pip install altair"
+            )
+        return {"code": self.results.chart_code(result_id, code, chart, filter_spec, library), "library": library}
 
     def filter_sql(self, result_id: str, filter_spec: dict | None) -> dict:
         return {"where": self.results.filter_sql(result_id, filter_spec)}

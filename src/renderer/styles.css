@@ -651,6 +651,78 @@
   white-space: pre-wrap;
 }
 
+/* -- Chart view ----------------------------------------------------------------- */
+
+.dx-chart {
+  padding: 6px 10px 8px;
+  border: 1px solid var(--dx-border);
+  border-radius: 4px;
+  outline: none;
+  background: var(--dx-surface);
+}
+
+.dx-chart.dx-stale .dx-chart-plot {
+  opacity: 0.55;
+}
+
+.dx-chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 12px;
+}
+
+.dx-chart-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dx-chart-label {
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-select {
+  max-width: 220px;
+  height: 22px;
+  padding: 0 2px;
+  border: 1px solid var(--vscode-dropdown-border, var(--dx-border));
+  border-radius: 2px;
+  background: var(--vscode-dropdown-background, var(--dx-surface));
+  color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+  font: inherit;
+}
+
+.dx-select:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.dx-select:disabled {
+  opacity: 0.6;
+}
+
+.dx-chart-keep {
+  margin-left: auto;
+}
+
+.dx-chart-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dx-chart-status.dx-error {
+  color: var(--vscode-errorForeground);
+  white-space: pre-wrap;
+}
+
+.dx-chart-plot {
+  min-height: 320px;
+  margin-top: 6px;
+}
+
 /* Vega-Lite charts: wide ones scroll rather than overflow the output. */
 .dx-vega {
   max-width: 100%;

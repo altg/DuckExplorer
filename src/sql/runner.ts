@@ -5,7 +5,8 @@ import { HISTORY_SCHEME, QueryHistory, QueryRun } from '../history/queryHistory'
 import { KernelClient } from '../kernel/kernelProcess';
 import { RunSource, StatementError, StatementsResult } from '../kernel/protocol';
 import { ExportChoice, Exported, exportRows, ExportSource } from '../notebook/export';
-import { ExportResult, InsertFilteredCell } from '../notebook/gridRequests';
+import { chartCell, ExportResult, InsertChartCell, InsertFilteredCell } from '../notebook/gridRequests';
+import { runInNotebook } from '../notebook/insert';
 import { baseDirectory, setBaseDirectory, sqlFilesEnabled } from './documents';
 import { SqlResultsView } from './resultsView';
 import { splitStatements, Statement, statementAt } from './statements';
@@ -46,6 +47,7 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
       cancel: () => void kernel.interrupt(),
       reveal: () => void this.reveal(),
       insertFilteredCell: (request) => this.insertQuery(request),
+      insertChartCell: (request) => this.insertChartCell(request),
       exportResult: (request) => this.exportResult(request),
     });
     this.disposables = [
@@ -234,6 +236,20 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
     editor.selection = new vscode.Selection(document.positionAt(added.start), document.positionAt(added.through));
     editor.revealRange(editor.selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     void this.run(document, [added]);
+    return {};
+  }
+
+  /**
+   * "New cell" in the Chart view: a .sql file has no Python, so the chart's code goes into a notebook (the
+   * active or a visible one, else a new one), over the statement that made the result.
+   */
+  private async insertChartCell(request: InsertChartCell): Promise<{}> {
+    const run = this.latest;
+    if (run?.result?.table?.id !== request.resultId) {
+      throw new Error('the results view shows another result since.');
+    }
+    const statement = run.statements[run.statements.length - 1];
+    await runInNotebook(await chartCell(this.kernel, request, statement.text), 'python');
     return {};
   }
 

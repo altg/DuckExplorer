@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import duckdb
 import pyarrow as pa
 
-from . import export, filters
+from . import chart, export, filters
 from . import profile as column_profile
 from .session import Session, quote_ident
 
@@ -127,6 +127,28 @@ class ResultStore:
             else:
                 stored.profiles.move_to_end(key)
         return cached
+
+    def chart(self, result_id: str, request: dict | None, filter_spec: dict | None = None) -> dict:
+        """The Chart view of the rows a filter keeps (see chart.py)."""
+        stored = self.get(result_id)
+        spec = filters.normalize(filter_spec)
+        with self._session.side_lock:
+            rows = self._matching_rows(stored, spec)
+            scan = stored.scan if rows is None else stored.scan.take(rows)
+            return chart.chart_spec(self._session.side, scan, stored.columns, request)
+
+    def chart_code(self, result_id: str, code: str, request: dict, filter_spec: dict | None, library: str) -> str:
+        """Python that draws the chart over the query `code` made the result with (its last statement),
+        filtered like the grid."""
+        stored = self.get(result_id)
+        spec = filters.normalize(filter_spec)
+        source = chart.source_query(code)
+        with self._session.side_lock:
+            side = self._session.side
+            rows = self._matching_rows(stored, spec)
+            scan = stored.scan if rows is None else stored.scan.take(rows)
+            where = filters.to_sql(spec, stored.columns, side)
+            return chart.chart_code(side, scan, stored.columns, request, source, where, library)
 
     def filter_sql(self, result_id: str, filter_spec: dict | None) -> str:
         """The filter as one SQL condition over the result's column names (see filters.to_sql)."""

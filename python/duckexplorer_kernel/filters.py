@@ -107,15 +107,20 @@ def order_sql(sort: tuple[int, bool], columns: list[dict], side: duckdb.DuckDBPy
     return f"{column_name(column, columns, side)} {'DESC' if descending else 'ASC'} NULLS LAST"
 
 
-def filtered_query(code: str, where: str, order_by: str) -> str:
-    """The last statement of a SQL cell as a subquery, with a WHERE and ORDER BY around it."""
+def last_statement(code: str) -> str:
+    """The last statement of a SQL cell, without leading comments and its semicolon, to use as a subquery."""
     try:
         statements = duckdb.extract_statements(code)
     except duckdb.Error as exc:
         raise InvalidFilter(f"The cell's SQL doesn't parse any more: {exc}") from None
     if not statements:
         raise InvalidFilter("The cell has no SQL statement.")
-    query = _bare_statement(statements[-1].query)
+    return _bare_statement(statements[-1].query)
+
+
+def filtered_query(code: str, where: str, order_by: str) -> str:
+    """The last statement of a SQL cell as a subquery, with a WHERE and ORDER BY around it."""
+    query = last_statement(code)
     # The closing parenthesis goes on its own line, after any trailing -- comment.
     lines = ["SELECT *", "FROM (", query, ")"]
     if where:
@@ -135,6 +140,11 @@ def column_name(column: int, columns: list[dict], side: duckdb.DuckDBPyConnectio
     name = columns[column]["name"]
     if any(other["name"].lower() == name.lower() for other in columns[:column]):
         raise InvalidFilter(f'The result has more than one column named "{name}"; SQL can only refer to the first one.')
+    return quote_name(name, side)
+
+
+def quote_name(name: str, side: duckdb.DuckDBPyConnection) -> str:
+    """A name as SQL, quoted only when it has to be."""
     if _SIMPLE_NAME.fullmatch(name) and name.lower() not in _reserved_words(side):
         return name
     return quote_ident(name)

@@ -1,4 +1,5 @@
-import type { Cell, FilterCondition, FilterSpec, SortSpec, TableResult } from '../kernel/protocol';
+import type { Cell, ChartConfig, FilterCondition, FilterSpec, SortSpec, TableResult } from '../kernel/protocol';
+import { type ChartLink, ChartView } from './chart';
 import type { HostClient } from './client';
 import { ColumnExplorer } from './columns';
 import { describeCondition, FilterBar, type QueryLink, withCondition, withoutColumn, withWhere } from './filters';
@@ -18,21 +19,32 @@ const NUMERIC_TYPE = /^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|UTINYINT|USMALLI
 // Types whose values can be filtered with ≥ and ≤ besides numbers.
 const TEMPORAL_TYPE = /^(DATE|TIME|TIMESTAMP(_S|_MS|_NS)?|TIMESTAMP WITH TIME ZONE|TIME WITH TIME ZONE|INTERVAL)$/i;
 
+type Tab = 'rows' | 'columns' | 'chart';
+
+const TABS: [Tab, string, string][] = [
+  ['rows', 'Rows', 'Show the rows'],
+  ['columns', 'Columns', 'Column Explorer: distribution, NULLs and distinct values per column'],
+  ['chart', 'Chart', 'Chart the rows: bars, lines, areas or a scatter of the columns you choose'],
+];
+
 /**
  * Virtualized results grid: renders only the visible rows and columns and fetches further
  * pages from the kernel as the user scrolls. The kernel sorts (click a header) and filters (the
  * filter bar, cell and header menus, Column Explorer bars) the stored result; the grid pages
- * through that view. The footer switches between the rows and the Column Explorer, and exports the view.
+ * through that view. The footer switches between the rows, the Column Explorer and the Chart
+ * view, and exports the view.
  */
 export interface GridOptions {
   /** The view to open on (default: the rows). */
-  tab?: 'rows' | 'columns';
+  tab?: Tab;
   /** Height limit of the rows and the Column Explorer, in px (default 420). */
   maxHeight?: number;
-  /** Offer "New cell" in the filter bar (default: for results of SQL cells, which bind to Python names). */
+  /** Offer "New cell" in the filter bar and the Chart view (default: for results of SQL cells, which bind to Python names). */
   queryCell?: boolean;
   /** "New cell" under another name, where the query goes somewhere else than a notebook cell. */
   queryLink?: QueryLink;
+  /** The Chart view's "New cell" under another name. */
+  chartLink?: ChartLink;
 }
 
 export class ResultGrid {
@@ -56,7 +68,7 @@ export class ResultGrid {
   private viewRequest = 0;
   /** Bumped whenever the loaded pages are discarded, so late responses for them are dropped. */
   private generation = 0;
-  private tab: 'rows' | 'columns' = 'rows';
+  private tab: Tab = 'rows';
   private maxHeight: number;
   private suppressClick = false;
   private frame = 0;
@@ -72,6 +84,7 @@ export class ResultGrid {
   private readonly menu: ContextMenu;
   private readonly filterBar: FilterBar | undefined;
   private readonly explorer: ColumnExplorer | undefined;
+  private readonly chart: ChartView | undefined;
 
   constructor(
     element: HTMLElement,
@@ -107,12 +120,13 @@ export class ResultGrid {
     if (result.columns.length === 0) {
       this.viewport.remove();
     } else if (client.available) {
+      const queryCell = options.queryCell ?? result.boundTo !== undefined;
       if (result.rowCount > 0) {
         this.filterBar = new FilterBar(result.columns, {
           change: (filter) => void this.applyView(this.sort, filter, 'filter'),
           toggled: () => this.renderFooter(),
           editAsSql: () => void this.editAsSql(),
-          newCell: (options.queryCell ?? result.boundTo !== undefined) ? () => void this.newCell() : undefined,
+          newCell: queryCell ? () => void this.newCell() : undefined,
         }, options.queryLink);
         root.prepend(this.filterBar.element);
       }
@@ -124,7 +138,9 @@ export class ResultGrid {
         this.filterBar ? (condition) => this.addCondition(condition) : undefined,
       );
       this.explorer.element.hidden = true;
-      this.viewport.after(this.explorer.element);
+      this.chart = new ChartView(result, client, signal, queryCell ? (chart) => this.newChartCell(chart) : undefined, options.chartLink);
+      this.chart.element.hidden = true;
+      this.viewport.after(this.explorer.element, this.chart.element);
     }
 
     this.viewport.addEventListener(
@@ -352,14 +368,11 @@ export class ResultGrid {
     if (this.explorer) {
       const tabs = el('div', 'dx-tabs');
       tabs.setAttribute('role', 'tablist');
-      for (const [tab, label] of [
-        ['rows', 'Rows'],
-        ['columns', 'Columns'],
-      ] as const) {
+      for (const [tab, label, title] of TABS) {
         const button = el('button', tab === this.tab ? 'dx-tab active' : 'dx-tab', label);
         button.setAttribute('role', 'tab');
         button.setAttribute('aria-selected', String(tab === this.tab));
-        button.title = tab === 'rows' ? 'Show the rows' : 'Column Explorer: distribution, NULLs and distinct values per column';
+        button.title = title;
         button.addEventListener('click', () => this.setTab(tab));
         tabs.append(button);
       }
@@ -525,6 +538,17 @@ export class ResultGrid {
     if (!this.signal.aborted && response.error === 'expired') this.markExpired();
   }
 
+  /** The Chart view's "New cell": the chart, of the filtered rows, as a Python cell. Resolves to why it couldn't. */
+  private async newChartCell(chart: ChartConfig): Promise<string | undefined> {
+    const response = await this.client.insertChartCell(this.result.id, chart, this.filter);
+    if (this.signal.aborted || response.result) return undefined;
+    if (response.error === 'expired') {
+      this.markExpired();
+      return 'the kernel no longer holds the result. Run the cell again.';
+    }
+    return response.error;
+  }
+
   private commitView(sort: SortSpec | undefined, filter: FilterSpec | undefined, total: number, firstPage: Cell[][]): void {
     const filterChanged = filter !== this.filter;
     this.sort = sort;
@@ -538,6 +562,7 @@ export class ResultGrid {
       this.viewport.scrollTop = 0;
       this.filterBar?.update(filter);
       this.explorer?.setFilter(filter);
+      this.chart?.setFilter(filter);
     }
     this.layout();
     this.renderFooter();
@@ -557,6 +582,7 @@ export class ResultGrid {
       this.resetPages(this.result.rows);
       this.viewport.scrollTop = 0;
       this.explorer?.setFilter(undefined);
+      this.chart?.setFilter(undefined);
     }
     this.layout();
     this.renderFooter();
@@ -597,15 +623,19 @@ export class ResultGrid {
     void this.applyView(this.sort, withCondition(this.filter, condition), 'filter');
   }
 
-  private setTab(tab: 'rows' | 'columns'): void {
-    if (!this.explorer || tab === this.tab) return;
+  private setTab(tab: Tab): void {
+    if (!this.explorer || !this.chart || tab === this.tab) return;
     this.tab = tab;
     this.menu.close();
     this.viewport.hidden = tab !== 'rows';
     this.explorer.element.hidden = tab !== 'columns';
+    this.chart.element.hidden = tab !== 'chart';
     if (tab === 'columns') {
       this.explorer.show();
       this.explorer.element.focus({ preventScroll: true });
+    } else if (tab === 'chart') {
+      this.chart.show();
+      this.chart.element.focus({ preventScroll: true });
     } else {
       this.viewport.focus({ preventScroll: true });
       this.schedule();

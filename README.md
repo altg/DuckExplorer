@@ -1,10 +1,10 @@
 # DuckExplorer
 
 A DuckDB UI-style analysis workspace inside VS Code. Attach DuckDB databases, browse their
-schemas, run SQL in notebooks, scroll through large results, and chart them with Python
-(Plotly, Altair or Matplotlib) in the same notebook.
+schemas, run SQL in notebooks, scroll through large results, and chart them, from the grid or with
+Python (Plotly, Altair or Matplotlib) in the same notebook.
 
-## Features (milestone 1)
+## Features
 
 - **Databases view** (activity bar → DuckExplorer): attach `.duckdb` files (read-write,
   read-only, or create new) and browse database → schema → table/view → column. Attached files
@@ -31,6 +31,15 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
     distinct count, and min/max/mean, for the rows the filter keeps. Click a histogram bar or a
     value to filter to it (bars re-bin, so you can drill in), or elsewhere on a column's line to
     jump to that column in the rows.
+  - **Chart**: the **Chart** button under a result charts it: bars, lines, areas or a scatter. It
+    opens on a chart picked from the columns (a line over a date column, bars per category, colored by
+    a column with a few values), and the controls change the type, the X column (and, for dates, the
+    time unit it's grouped by), the Y column and how it's aggregated (sum, average, median, min, max,
+    each value, or a count of rows), and the color. DuckDB aggregates the rows the filter keeps, so a
+    chart of millions of rows draws a few hundred values; a bar chart shows the 100 largest
+    categories, a scatter samples 5,000 rows, and the chart says when it does. **New cell** keeps the
+    chart: it adds a Python cell that draws it with Altair (with Plotly when Altair isn't installed)
+    from the cell's query, filtered like the grid, and runs it.
   - **Export**: the **Export** button under a result saves its rows to a CSV, Parquet or Excel
     (`.xlsx`) file, filtered and sorted as the grid shows them. Choose the format, then the file (the
     dialog opens in the notebook's folder, and a cell's `-- name:` names the file); a notification
@@ -58,8 +67,9 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
     folder. Stop runs with the notebook's Interrupt button.
 - **Table summary**: click a table or view in the Databases view (the arrow still lists its
   columns) to open its summary beside the notebook: the Column Explorer for the whole relation,
-  its rows, and the same sorting and filters as under a notebook cell. **New cell** there writes
-  `SELECT * FROM <table> WHERE …` into the notebook, and **Export** saves the rows to a file. Tables
+  its rows and Chart view, and the same sorting and filters as under a notebook cell. **New cell**
+  there writes `SELECT * FROM <table> WHERE …` (or the chart's Python) into the notebook, and
+  **Export** saves the rows to a file. Tables
   over 1,000,000 rows are summarized from a random sample, which the panel says; Export still saves
   every row that matches the filter. **Refresh** reads the rows again. **Export…** on a table or view
   in the Databases view saves all of it.
@@ -80,8 +90,9 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
   or the selected statements; **Ctrl+Shift+Enter** (or the Run button in the editor title, or
   **Run File** on a `.sql` file in the Explorer) runs the whole file, stopping at the first error.
   The last statement's rows show in the **DuckDB Results** view in the bottom panel, with the same
-  grid as a notebook cell (sorting, filters, Column Explorer, and Export, into the file's folder);
-  its **Insert query** writes the filtered, sorted query below the statement and runs it. Statements
+  grid as a notebook cell (sorting, filters, Column Explorer, Chart, and Export, into the file's
+  folder); its **Insert query** writes the filtered, sorted query below the statement and runs it, and
+  the Chart view's **New cell** adds the chart's Python to a notebook. Statements
   without rows say what they did (`3 rows inserted`). An error is underlined where DuckDB says it
   is. Files share the session
   with notebooks, so a temporary table made in one is visible in the other, and relative paths
@@ -103,7 +114,7 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
 
 - VS Code 1.100+
 - Python 3.10+ with `duckdb` and `pyarrow` (required), and `pandas`, `matplotlib`, `plotly`,
-  `altair` (optional, for DataFrames and charts):
+  `altair` (optional, for DataFrames and charts; the Chart view's New cell needs Altair or Plotly):
 
   ```bash
   python -m pip install duckdb pyarrow pandas matplotlib plotly altair
@@ -187,6 +198,15 @@ Notebook renderer (webview): results grid + Plotly and Vega-Lite (loaded on dema
   with `INSTALL excel` into DuckDB's own extension folder (`~/.duckdb/extensions`); when that
   fails (offline, say), the export says so and suggests CSV or Parquet. Excel sheets are checked
   against their 1,048,575-row limit before anything is written.
+- The Chart view asks the kernel for a chart (any part left out is chosen from the columns' types,
+  distinct counts and, for dates, which time units their values already fall on). The kernel writes
+  the chart's data as one SQL query over the result's column names (`SELECT x, color, sum(y) …
+  GROUP BY ALL`), runs it over the stored rows the filter keeps, and returns a Vega-Lite spec with
+  the values. **New cell** runs the same plan with the cell's query as the source and the filter as
+  `WHERE`, and writes it as Altair (or Plotly Express) code around `sql("""…""")`, so the cell draws
+  the same values from the database. Altair charts are sent as their Vega-Lite JSON. Vega and
+  Vega-Lite are bundled into a chunk that loads with the first chart, and run with Vega's expression
+  interpreter, so charts work under the webviews' content security policy (no `eval`).
 - Completions read the cell's SQL with a tokenizer rather than a parser, so half-typed SQL
   still works. They find the query's `FROM` clause (before or after the cursor), its aliases,
   CTEs and subqueries, and look the names up in a catalog the kernel sends: the schema
@@ -213,9 +233,9 @@ panel), `src/notebook` (serializer, controller and its streamed outputs, grid re
 cursor context, completions and parameter hints; dropped files as SQL; running `.sql` files and
 their results view),
 `src/history` (query history: entries, store, view),
-`src/renderer` (grid, filter bar and menus, Column Explorer, Plotly, the pages of the summary
-panel and results view), `python/duckexplorer_kernel` (kernel), `samples` (demo database
-builder, notebook and `.sql` file).
+`src/renderer` (grid, filter bar and menus, Column Explorer, Chart view, Plotly and Vega-Lite, the
+pages of the summary panel and results view), `python/duckexplorer_kernel` (kernel; `chart.py` plans
+the Chart view's charts), `samples` (demo database builder, notebook and `.sql` file).
 
 ## Tests
 
@@ -227,9 +247,9 @@ npm test              # VS Code integration test (downloads a test build of VS C
 
 ## Roadmap
 
-- **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
-  grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions,
-  running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and
-  data files, streaming cell output, Altair/Vega-Lite output. Next: a "Chart this" builder.
-- **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
+- **Milestone 2, DuckDB UI parity (done):** Column Explorer, sorting and filtering in the grid
+  (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions, running
+  `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and data
+  files, streaming cell output, Altair/Vega-Lite output, and the Chart view ("Chart this").
+- **Milestone 3 (next):** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

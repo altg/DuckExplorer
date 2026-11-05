@@ -40,6 +40,8 @@ _SIDE_METHODS = {
     "summarize",
     "exportResult",
     "exportRelation",
+    "chartSpec",
+    "chartCode",
 }
 
 
@@ -77,6 +79,8 @@ class Server:
             "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"], p.get("sort"), p.get("filter")),
             "profileResult": lambda p: k.profile_result(p["resultId"], p.get("filter")),
             "filterSql": lambda p: k.filter_sql(p["resultId"], p.get("filter")),
+            "chartSpec": lambda p: k.chart_spec(p["resultId"], p.get("chart"), p.get("filter")),
+            "chartCode": lambda p: k.chart_code(p["resultId"], p["code"], p["chart"], p.get("filter")),
             "filteredQuery": lambda p: k.filtered_query(p["resultId"], p["code"], p.get("filter"), p.get("sort")),
             "exportResult": lambda p: k.export_result(p["resultId"], p["path"], p["format"], p.get("filter"), p.get("sort")),
             "exportRelation": lambda p: k.export_relation(p["database"], p["schema"], p["name"], p["path"], p["format"]),

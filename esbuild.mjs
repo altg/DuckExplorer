@@ -21,27 +21,22 @@ const contexts = await Promise.all([
     target: 'node20',
     external: ['vscode'],
   }),
-  // Notebook renderer: browser ESM; Plotly is split into a lazily loaded chunk.
+  // The notebook renderer, and the pages of the table summary panel and the results view (module
+  // scripts in webviews): browser ESM sharing the grid, with Plotly and Vega split into chunks that
+  // load when a chart is first drawn.
   esbuild.context({
     ...common,
-    entryPoints: { renderer: 'src/renderer/index.ts' },
+    entryPoints: {
+      renderer: 'src/renderer/index.ts',
+      summary: 'src/renderer/summary.ts',
+      results: 'src/renderer/results.ts',
+    },
     outdir: 'dist',
     platform: 'browser',
     format: 'esm',
     target: 'es2022',
     splitting: true,
     chunkNames: 'chunks/[name]-[hash]',
-    loader: { '.css': 'text' },
-  }),
-  // Webviews of the table summary panel and the results view: classic scripts, sharing the grid
-  // with the renderer.
-  esbuild.context({
-    ...common,
-    entryPoints: { summary: 'src/renderer/summary.ts', results: 'src/renderer/results.ts' },
-    outdir: 'dist',
-    platform: 'browser',
-    format: 'iife',
-    target: 'es2022',
     loader: { '.css': 'text' },
   }),
 ]);

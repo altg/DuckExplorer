@@ -2,7 +2,15 @@ import * as vscode from 'vscode';
 import { KernelClient } from '../kernel/kernelProcess';
 import { SummaryAction, SummaryMessage, SummaryRelation, TableResult } from '../kernel/protocol';
 import { ExportChoice, Exported, exportRows, ExportSource } from '../notebook/export';
-import { answerGridRequest, ExportResult, gridWebviewHtml, InsertFilteredCell, isGridRequest } from '../notebook/gridRequests';
+import {
+  answerGridRequest,
+  chartCell,
+  ExportResult,
+  gridWebviewHtml,
+  InsertChartCell,
+  InsertFilteredCell,
+  isGridRequest,
+} from '../notebook/gridRequests';
 import { runInNotebook } from '../notebook/insert';
 
 /**
@@ -90,6 +98,7 @@ export class TableSummaryPanel implements vscode.Disposable {
     if (isGridRequest(message)) {
       const response = await answerGridRequest(this.kernel, message, {
         insertFilteredCell: (request) => this.insertFilteredCell(request),
+        insertChartCell: (request) => this.insertChartCell(request),
         exportResult: (request) => this.exportResult(request),
       });
       await this.panel?.webview.postMessage(response);
@@ -112,18 +121,29 @@ export class TableSummaryPanel implements vscode.Disposable {
 
   /** "New cell" in the panel's filter bar: the whole relation, filtered and sorted, in a notebook. */
   private async insertFilteredCell({ resultId, filter, sort }: InsertFilteredCell): Promise<{}> {
-    const shown = this.latest?.type === 'summary' ? this.latest : undefined;
-    if (shown?.table.id !== resultId) {
-      throw new Error('the summary has changed since.');
-    }
     const { code } = await this.kernel.request<{ code: string }>('filteredQuery', {
       resultId,
-      code: `SELECT * FROM ${shown.relation.qualified}`,
+      code: this.queryOf(resultId),
       filter,
       sort,
     });
     await runInNotebook(code);
     return {};
+  }
+
+  /** "New cell" in the panel's Chart view: a Python cell drawing the chart from the whole relation, in a notebook. */
+  private async insertChartCell(request: InsertChartCell): Promise<{}> {
+    await runInNotebook(await chartCell(this.kernel, request, this.queryOf(request.resultId)), 'python');
+    return {};
+  }
+
+  /** The relation the panel shows, as a query; a sample's filters then apply to all of its rows. */
+  private queryOf(resultId: string): string {
+    const shown = this.latest?.type === 'summary' ? this.latest : undefined;
+    if (shown?.table.id !== resultId) {
+      throw new Error('the summary has changed since.');
+    }
+    return `SELECT * FROM ${shown.relation.qualified}`;
   }
 
   /** "Export" under the panel's grid: the relation's rows, filtered and sorted (all of them when the panel shows a sample). */

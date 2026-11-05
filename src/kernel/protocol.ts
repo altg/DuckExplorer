@@ -242,6 +242,34 @@ export interface ResultProfile {
 /** The files an export writes (python/duckexplorer_kernel/export.py). */
 export type ExportFormat = 'csv' | 'parquet' | 'xlsx';
 
+/** A chart of a result's columns, in its Chart view (python/duckexplorer_kernel/chart.py). */
+export interface ChartConfig {
+  mark: 'bar' | 'line' | 'area' | 'point';
+  /** Column indexes. */
+  x: number;
+  /** A numeric column, or null to count rows. */
+  y: number | null;
+  aggregate: 'sum' | 'mean' | 'median' | 'min' | 'max' | 'none';
+  color: number | null;
+  /** What temporal x values are truncated to; 'auto' lets the kernel choose. */
+  timeUnit: 'auto' | 'none' | 'year' | 'quarter' | 'month' | 'week' | 'day' | 'hour' | 'minute';
+}
+
+/** What a column can be in a chart. */
+export type ChartKind = 'numeric' | 'temporal' | 'text' | 'boolean' | 'other';
+
+export interface ChartResult {
+  /** The chart drawn: the request with the parts it left out (and 'auto') chosen. */
+  chart: ChartConfig;
+  kinds: ChartKind[];
+  /** A Vega-Lite spec with its data. */
+  spec: Record<string, unknown>;
+  /** How many values the chart has. */
+  rows: number;
+  /** When it doesn't show every value ("5,000 rows sampled from 20,000"), or has none. */
+  note?: string;
+}
+
 // Renderer <-> extension messages (notebook renderer messaging). Each request type is also the
 // kernel method that answers it; the remaining fields are its params.
 
@@ -257,6 +285,9 @@ export type RendererRequest =
     }
   | { type: 'profileResult'; requestId: number; resultId: string; filter?: FilterSpec }
   | { type: 'filterSql'; requestId: number; resultId: string; filter?: FilterSpec }
+  | { type: 'chartSpec'; requestId: number; resultId: string; chart?: Partial<ChartConfig>; filter?: FilterSpec }
+  /** Answered by the extension: a Python cell that draws the chart (the kernel's chartCode), run in a notebook. */
+  | { type: 'insertChartCell'; requestId: number; resultId: string; chart: ChartConfig; filter?: FilterSpec }
   /** Answered by the extension: a SQL cell below the result's own, rerunning its query filtered and sorted. */
   | { type: 'insertFilteredCell'; requestId: number; resultId: string; filter?: FilterSpec; sort?: SortSpec }
   /**
@@ -271,7 +302,9 @@ export interface RendererResults {
   profileResult: ResultProfile;
   /** The filter as one SQL condition over the result's column names. */
   filterSql: { where: string };
+  chartSpec: ChartResult;
   insertFilteredCell: Record<string, never>;
+  insertChartCell: Record<string, never>;
   /** The extension says how the export went. */
   exportResult: Record<string, never>;
 }

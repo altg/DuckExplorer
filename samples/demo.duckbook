@@ -54,6 +54,16 @@
   {
    "kind": "markdown",
    "language": "markdown",
+   "source": "## Charts\n\nAltair charts render as Vega-Lite. To chart a result without writing code, open its **Chart** view (under the grid), then **New cell** keeps the chart as a Python cell."
+  },
+  {
+   "kind": "code",
+   "language": "python",
+   "source": "import altair as alt\n\n# df is the result of the SQL cell above.\nalt.Chart(df).mark_bar().encode(\n    x=alt.X(\"pct_of_target:Q\", title=\"% of monthly target\"),\n    y=alt.Y(\"category:N\", sort=\"-x\", title=None),\n    color=alt.condition(alt.datum.pct_of_target >= 100, alt.value(\"#3fa34d\"), alt.value(\"#e0a030\")),\n).properties(width=\"container\", title=\"Average month against its target\")"
+  },
+  {
+   "kind": "markdown",
+   "language": "markdown",
    "source": "## Big results\n\nAbout 300,000 rows: the grid fetches pages from the kernel as you scroll. Click a cell, then use the arrow keys or Ctrl+C."
   },
   {
