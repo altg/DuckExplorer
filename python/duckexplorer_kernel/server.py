@@ -3,15 +3,19 @@
 Requests:      {"id": 1, "method": "executeSql", "params": {...}}
 Responses:     {"id": 1, "result": {...}}  or  {"id": 1, "error": {"code": "...", "message": "..."}}
 Notifications: {"method": "ready", "params": {...}}  (kernel -> extension)
+               {"method": "output", "params": {"stream": …, "index": 0, "output": {...}}}  (a running cell's
+               outputs, when its request has a `stream` token; see pyexec.Capture)
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import queue
 import sys
 import threading
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
@@ -20,6 +24,10 @@ from .export import ExportFailed
 from .filters import InvalidFilter
 from .kernel import Kernel
 from .results import ResultExpired
+
+# Once the extension has gone (stdin closed), the kernel exits within this many seconds, even while a
+# cell runs or a write blocks on a pipe that nobody reads any more.
+EXIT_GRACE = 3.0
 
 # Served on a side thread (with the side cursor) so they don't wait for a running cell.
 _SIDE_METHODS = {
@@ -50,6 +58,7 @@ class Server:
         self._side = ThreadPoolExecutor(max_workers=1, thread_name_prefix="duckexplorer-side")
         self.kernel = Kernel()
         k = self.kernel
+        k.notify = lambda method, params: self.send({"method": method, "params": params})
         self._handlers: dict[str, Callable[[dict], Any]] = {
             "info": lambda p: k.info(),
             "configure": lambda p: k.configure(p),
@@ -62,8 +71,8 @@ class Server:
             "schema": lambda p: k.session.schema(),
             "sqlCatalog": lambda p: k.sql_catalog(p.get("notebook"), p.get("functionsVersion")),
             "summarize": lambda p: k.summarize(p["database"], p["schema"], p["name"]),
-            "executeSql": lambda p: k.execute_sql(p["notebook"], p["code"], p.get("cwd")),
-            "executePython": lambda p: k.execute_python(p["notebook"], p["code"], p.get("cwd")),
+            "executeSql": lambda p: k.execute_sql(p["notebook"], p["code"], p.get("cwd"), p.get("stream")),
+            "executePython": lambda p: k.execute_python(p["notebook"], p["code"], p.get("cwd"), p.get("stream")),
             "runStatements": lambda p: k.run_statements(p["statements"], p.get("cwd")),
             "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"], p.get("sort"), p.get("filter")),
             "profileResult": lambda p: k.profile_result(p["resultId"], p.get("filter")),
@@ -105,6 +114,11 @@ class Server:
             else:
                 self._queue.put(message)
         self._queue.put(None)  # stdin closed: the extension went away
+        # The main loop normally ends now. But a cell may still be running, or the main thread may be
+        # blocked writing outputs to the extension's end of a pipe that is still open but no longer read
+        # (it never errors then): nothing reaches the extension any more either way, so exit regardless.
+        time.sleep(EXIT_GRACE)
+        os._exit(0)
 
     def _handle(self, message: dict) -> None:
         msg_id = message.get("id")
@@ -141,7 +155,15 @@ class Server:
 
 
 def main() -> None:
-    Server().serve()
-    # Skip interpreter teardown: user code may have left non-daemon threads behind.
-    sys.stderr.flush()
-    os._exit(0)
+    code = 0
+    try:
+        Server().serve()
+    except BaseException:  # e.g. the pipe to the extension broke
+        code = 1
+        with contextlib.suppress(Exception):
+            traceback.print_exc()
+    # Skip interpreter teardown: user code may have left non-daemon threads behind, and its flushes
+    # could block on pipes to an extension that went away.
+    with contextlib.suppress(Exception):
+        sys.stderr.flush()
+    os._exit(code)

@@ -77,3 +77,28 @@ def test_protocol_round_trip(tmp_path, sample_db):
             proc.kill()
         stderr = proc.stderr.read().decode("utf-8", "replace")
     assert "noise" in stderr
+
+
+def test_kernel_exits_when_the_extension_goes_away_mid_cell(tmp_path):
+    """stdin closes while a cell streams output into a pipe that is still open but no longer read: the
+    writes block, and the kernel exits anyway rather than staying behind with the files it opened."""
+    env = {**os.environ, "PYTHONPATH": str(PYTHON_DIR), "PYTHONIOENCODING": "utf-8"}
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "duckexplorer_kernel"],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert json.loads(proc.stdout.readline())["method"] == "ready"
+        code = "import time\nfor i in range(10_000):\n    print('line', i, 'x' * 2000)\n    time.sleep(0.01)"
+        cell = {"id": 1, "method": "executePython", "params": {"notebook": "nb", "code": code, "stream": 1}}
+        proc.stdin.write((json.dumps(cell) + "\n").encode())
+        proc.stdin.close()
+        # stdout stays open and unread from here on.
+        assert proc.wait(timeout=15) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()

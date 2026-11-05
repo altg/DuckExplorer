@@ -48,6 +48,8 @@ schemas, run SQL in notebooks, scroll through large results, and chart them with
     with `-- name: sales` to also keep it as `sales`.
   - SQL cells can query DataFrames created in Python cells by name.
   - Python helpers: `con` (the DuckDB connection), `sql("…")` → DataFrame, `display(obj)`.
+  - Output shows while a cell runs: printed lines, `display()`, `plt.show()` and `fig.show()` appear
+    as they happen (a loop of prints a few times a second), not only when the cell is done.
   - Charts: Plotly figures render interactively; Matplotlib/Seaborn figures render as PNGs
     (`plt.show()` or the end of the cell). Plotly follows the VS Code light/dark theme.
   - A DataFrame or DuckDB relation as the last expression of a Python cell renders as a grid.
@@ -148,6 +150,10 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
 
 - One kernel process owns the DuckDB connection, so SQL and Python share one session, and
   DuckDB's one-writer file lock is never contended between them.
+- A running cell's outputs are sent as `output` notifications as they are made: a new output at
+  once, and text written to a stream in batches (at most every 100 ms, by a timer when the cell goes
+  quiet). The extension appends them to the cell; when the cell is done, a stream that came in
+  pieces becomes one item again, so the saved notebook is as if the outputs had come at once.
 - Result pages are rendered with DuckDB's own `VARCHAR` casts, so values look exactly as in the
   DuckDB CLI. Page, sort, filter, column-statistics, schema, completion and table-summary
   requests run on a second cursor, so they don't wait behind a running cell.
@@ -202,7 +208,7 @@ Notebook renderer (webview): results grid + Plotly (loaded on demand)
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view and its drops, summary
-panel), `src/notebook` (serializer, controller, grid requests, export), `src/sql` (SQL tokenizer,
+panel), `src/notebook` (serializer, controller and its streamed outputs, grid requests, export), `src/sql` (SQL tokenizer,
 cursor context, completions and parameter hints; dropped files as SQL; running `.sql` files and
 their results view),
 `src/history` (query history: entries, store, view),
@@ -223,6 +229,6 @@ npm test              # VS Code integration test (downloads a test build of VS C
 - **Milestone 2, DuckDB UI parity:** done so far: Column Explorer, sorting and filtering in the
   grid (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions,
   running `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and
-  data files. Next: streaming cell output, Altair/Vega-Lite output, a "Chart this" builder.
+  data files, streaming cell output. Next: Altair/Vega-Lite output, a "Chart this" builder.
 - **Milestone 3:** Instant SQL-style live preview with CTE inspection; S3/HTTP secrets and
   MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.

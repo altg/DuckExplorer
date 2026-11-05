@@ -42,9 +42,18 @@ export interface KernelError {
 }
 
 export interface ExecuteResult {
-  outputs: KernelOutput[];
+  /** Left out when the outputs were streamed (OutputUpdate notifications) while the cell ran. */
+  outputs?: KernelOutput[];
+  /** How many outputs were streamed. */
+  streamed?: number;
   error: KernelError | null;
 }
+
+/**
+ * The `output` notification of a cell that runs with a `stream` token (python/duckexplorer_kernel/pyexec.py,
+ * Capture): its output number `index` is new, or that stream output has more text.
+ */
+export type OutputUpdate = { stream: number; index: number } & ({ output: KernelOutput } | { text: string });
 
 /** The statements of a .sql file, run in order until one fails (python/duckexplorer_kernel/script.py). */
 export interface StatementsResult {

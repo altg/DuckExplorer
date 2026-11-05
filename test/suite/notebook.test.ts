@@ -82,6 +82,27 @@ suite('DuckExplorer notebook', () => {
     assert.deepStrictEqual(savedMimes, byLanguage.map(([, m]) => m[0]));
   });
 
+  test('a Python cell shows its output while it runs', async () => {
+    const code = "import time\nprint('first', flush=True)\ntime.sleep(4)\nprint('second')\n42";
+    const notebook = await vscode.workspace.openNotebookDocument(
+      'duckexplorer-notebook',
+      new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, code, 'python')]),
+    );
+    await vscode.window.showNotebookDocument(notebook);
+    const cell = notebook.cellAt(0);
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+    const text = () => cell.outputs.flatMap((o) => o.items.map((i) => Buffer.from(i.data).toString('utf8'))).join('');
+    await waitFor(() => text().includes('first'), 60_000, 'the first line');
+    assert.strictEqual(cell.executionSummary?.success, undefined, 'the first line shows before the cell is done');
+    await waitFor(() => cell.executionSummary?.success !== undefined, 30_000, 'the cell to finish');
+    assert.strictEqual(cell.executionSummary?.success, true, describeFailure(cell));
+    // As if the outputs had come at once: one stdout item, then the value.
+    assert.deepStrictEqual(
+      cell.outputs.map((o) => o.items.map((i) => [i.mime, Buffer.from(i.data).toString('utf8')])),
+      [[['application/vnd.code.notebook.stdout', 'first\nsecond\n']], [['text/plain', '42']]],
+    );
+  });
+
   test('a SQL error is reported on the cell', async () => {
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',

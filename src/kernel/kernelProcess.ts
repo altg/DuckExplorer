@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
 import { ChildProcess, spawn } from 'child_process';
-import { KernelInfo } from './protocol';
+import { KernelInfo, OutputUpdate } from './protocol';
 import { reportStartupFailure, resolvePython } from './pythonEnv';
 
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -32,6 +32,9 @@ export class KernelClient implements vscode.Disposable {
   private info: KernelInfo | undefined;
   private readonly pending = new Map<number, Pending>();
   private nextId = 1;
+  /** Listeners for the outputs of running cells, by stream token. */
+  private readonly streams = new Map<number, (update: OutputUpdate) => void>();
+  private nextStream = 1;
   private busyCount = 0;
   private disposed = false;
   private failed = false;
@@ -79,14 +82,20 @@ export class KernelClient implements vscode.Disposable {
     return this.send<T>(method, params);
   }
 
-  /** Like request(), but marks the kernel busy in the status bar while it runs. */
-  async execute<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  /**
+   * Like request(), but marks the kernel busy in the status bar while it runs. With `onOutput`, a cell's
+   * outputs come to it while the cell runs (all of them before the reply), rather than in the reply.
+   */
+  async execute<T>(method: string, params: Record<string, unknown>, onOutput?: (update: OutputUpdate) => void): Promise<T> {
     await this.ensureStarted();
     this.busyCount++;
     this.updateStatus();
+    const stream = onOutput ? this.nextStream++ : undefined;
+    if (stream !== undefined) this.streams.set(stream, onOutput!);
     try {
-      return await this.send<T>(method, params);
+      return await this.send<T>(method, stream === undefined ? params : { ...params, stream });
     } finally {
+      if (stream !== undefined) this.streams.delete(stream);
       this.busyCount--;
       this.updateStatus();
     }
@@ -179,6 +188,8 @@ export class KernelClient implements vscode.Disposable {
           if (message.method === 'ready') {
             clearTimeout(timer);
             resolve(message.params as KernelInfo);
+          } else if (message.method === 'output') {
+            this.streams.get(message.params?.stream)?.(message.params as OutputUpdate);
           } else if (message.id !== undefined) {
             this.settle(message);
           }

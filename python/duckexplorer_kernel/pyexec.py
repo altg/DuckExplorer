@@ -9,35 +9,99 @@ import importlib.machinery
 import io
 import linecache
 import sys
+import threading
+import time
 import traceback
 from typing import Any, Callable
 
 MAX_TEXT_OUTPUT = 200_000
+# Stream text written in a burst is sent at most this often while a cell runs.
+STREAM_INTERVAL = 0.1
 
 
 class Capture:
-    """Ordered outputs of one cell. Consecutive writes to the same stream are merged."""
+    """Ordered outputs of one cell. Consecutive writes to the same stream are merged.
 
-    def __init__(self, table_output: Callable[[Any], dict | None]) -> None:
+    With `emit`, the outputs are also sent while the cell runs: a new output as soon as it is added
+    (`{"index": i, "output": …}`), and text written to a stream output after that
+    (`{"index": i, "text": …}`), batched so a loop of prints sends a few messages a second. finish()
+    sends what is still waiting; nothing is sent after it. Writes may come from other threads.
+    """
+
+    def __init__(self, table_output: Callable[[Any], dict | None], emit: Callable[[dict], None] | None = None) -> None:
         self.outputs: list[dict] = []
         self._table_output = table_output
+        self._emit = emit
+        self.streamed = emit is not None
+        self._lock = threading.RLock()
+        # outputs[:_sent] have been sent; of the last of them, a stream, _sent_text characters.
+        self._sent = 0
+        self._sent_text = 0
+        self._last_flush = 0.0
+        self._timer: threading.Timer | None = None
 
     def stream(self, name: str, text: str) -> None:
         if not text:
             return
-        last = self.outputs[-1] if self.outputs else None
-        if last and last["type"] == "stream" and last["name"] == name:
-            last["text"] += text
-        else:
-            self.outputs.append({"type": "stream", "name": name, "text": text})
+        with self._lock:
+            last = self.outputs[-1] if self.outputs else None
+            if last and last["type"] == "stream" and last["name"] == name:
+                last["text"] += text
+            else:
+                self.outputs.append({"type": "stream", "name": name, "text": text})
+            if self._emit is None or self._timer is not None:
+                return
+            wait = self._last_flush + STREAM_INTERVAL - time.monotonic()
+            if wait <= 0:
+                self._flush()  # the first write after a quiet spell shows at once
+            else:
+                self._timer = threading.Timer(wait, self._flush_later)
+                self._timer.daemon = True
+                self._timer.start()
 
     def add(self, output: dict) -> None:
-        self.outputs.append(output)
+        with self._lock:
+            self.outputs.append(output)
+            if self._emit is not None:
+                self._flush()
 
     def display(self, obj: Any) -> None:
         output = to_output(obj, self._table_output)
         if output is not None:
             self.add(output)
+
+    def finish(self) -> None:
+        """Sends what hasn't been sent yet, and stops sending."""
+        with self._lock:
+            if self._emit is not None:
+                self._flush()
+                self._emit = None
+
+    def _flush_later(self) -> None:
+        with self._lock:
+            self._timer = None
+            if self._emit is not None:
+                self._flush()
+
+    def _flush(self) -> None:
+        """Call with the lock held and emit set."""
+        emit = self._emit
+        assert emit is not None
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._last_flush = time.monotonic()
+        if self._sent:
+            last = self.outputs[self._sent - 1]
+            if last["type"] == "stream" and len(last["text"]) > self._sent_text:
+                emit({"index": self._sent - 1, "text": last["text"][self._sent_text :]})
+                self._sent_text = len(last["text"])
+        while self._sent < len(self.outputs):
+            output = self.outputs[self._sent]
+            # A copy: a stream's text grows after it is sent.
+            emit({"index": self._sent, "output": dict(output)})
+            self._sent += 1
+            self._sent_text = len(output["text"]) if output["type"] == "stream" else 0
 
 
 class StreamWriter(io.TextIOBase):

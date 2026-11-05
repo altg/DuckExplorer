@@ -3,9 +3,10 @@ import * as vscode from 'vscode';
 import { HistoryOutcome, withoutExcerpt } from '../history/entries';
 import { QueryHistory } from '../history/queryHistory';
 import { KernelClient } from '../kernel/kernelProcess';
-import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, PLOTLY_MIME, RENDERER_ID, TABLE_MIME, TableResult } from '../kernel/protocol';
+import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, RENDERER_ID, TABLE_MIME, TableResult } from '../kernel/protocol';
 import { ExportChoice, Exported, exportRows, ExportSource } from './export';
 import { answerGridRequest, ExportResult, InsertFilteredCell, isGridRequest } from './gridRequests';
+import { errorOutput, LiveOutputs } from './outputs';
 
 interface QueuedCell {
   cell: vscode.NotebookCell;
@@ -120,24 +121,24 @@ export class DuckbookController implements vscode.Disposable {
         cwd: params.cwd,
       });
     };
+    // Outputs show as the cell makes them (prints, figures, display()), not only when it is done.
+    const live = new LiveOutputs(execution);
     try {
       const result = await this.kernel.execute<ExecuteResult>(
         language === 'sql' ? 'executeSql' : 'executePython',
         params,
+        (update) => live.update(update),
       );
-      const table = result.outputs.find((output) => output.type === 'table')?.table;
-      record(cellOutcome(result), table?.elapsedMs);
-      const outputs = result.outputs.map(toCellOutput);
-      if (result.error) {
-        outputs.push(
-          errorOutput(result.error.ename, result.error.evalue, result.error.traceback || undefined),
-        );
-      }
-      await execution.replaceOutput(outputs);
-      execution.end(!result.error, Date.now());
+      const outputs = result.outputs ?? live.outputs;
+      const table = outputs.find((output) => output.type === 'table')?.table;
+      record(cellOutcome(outputs, result.error), table?.elapsedMs);
+      const { error } = result;
+      await live.finish(error ? [errorOutput(error.ename, error.evalue, error.traceback || undefined)] : []);
+      execution.end(!error, Date.now());
     } catch (err) {
+      // The kernel stopped: what the cell printed before stays.
       record({ kind: 'error', message: (err as Error).message });
-      await execution.replaceOutput(errorOutput('Kernel error', (err as Error).message));
+      await live.finish([errorOutput('Kernel error', (err as Error).message)]);
       execution.end(false, Date.now());
     } finally {
       this.onDidExecute();
@@ -207,7 +208,7 @@ export class DuckbookController implements vscode.Disposable {
 }
 
 /** How a SQL cell went, for the history. */
-function cellOutcome({ outputs, error }: ExecuteResult): HistoryOutcome {
+function cellOutcome(outputs: KernelOutput[], error: ExecuteResult['error']): HistoryOutcome {
   if (error) {
     return error.ename === 'KeyboardInterrupt' ? { kind: 'interrupted' } : { kind: 'error', message: withoutExcerpt(error.evalue) };
   }
@@ -230,29 +231,4 @@ export function notebookDirectory(uri: vscode.Uri): string | undefined {
     return path.dirname(uri.fsPath);
   }
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-}
-
-function toCellOutput(output: KernelOutput): vscode.NotebookCellOutput {
-  switch (output.type) {
-    case 'stream':
-      return new vscode.NotebookCellOutput([
-        output.name === 'stderr'
-          ? vscode.NotebookCellOutputItem.stderr(output.text)
-          : vscode.NotebookCellOutputItem.stdout(output.text),
-      ]);
-    case 'text':
-      return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.text(output.text)]);
-    case 'html':
-      return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.text(output.html, 'text/html')]);
-    case 'table':
-      return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.json(output.table, TABLE_MIME)]);
-    case 'png':
-      return new vscode.NotebookCellOutput([new vscode.NotebookCellOutputItem(Buffer.from(output.data, 'base64'), 'image/png')]);
-    case 'plotly':
-      return new vscode.NotebookCellOutput([new vscode.NotebookCellOutputItem(Buffer.from(output.json, 'utf8'), PLOTLY_MIME)]);
-  }
-}
-
-function errorOutput(name: string, message: string, stack?: string): vscode.NotebookCellOutput {
-  return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.error({ name, message, stack })]);
 }

@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import duckdb
 import pyarrow as pa
@@ -47,6 +47,8 @@ class Kernel:
         self._busy: str | None = None
         self._busy_lock = threading.Lock()
         self._thread_id = threading.get_ident()
+        # Sends a notification to the extension (set by the server): outputs of a running cell.
+        self.notify: Callable[[str, dict], None] | None = None
         pyexec.install_hooks()
 
     # -- info / configuration ------------------------------------------------------
@@ -111,11 +113,20 @@ class Kernel:
     # -- execution -----------------------------------------------------------------
 
     @contextlib.contextmanager
-    def _running(self, mode: str, cwd: str | None) -> Iterator[pyexec.Capture]:
+    def _running(self, mode: str, cwd: str | None, stream: Any = None) -> Iterator[pyexec.Capture]:
+        """While a cell runs: its folder, its output capture and the busy state for interrupts.
+
+        With `stream` (a token from the extension), outputs are sent as `output` notifications as they
+        are made, rather than only in the reply.
+        """
         if cwd and os.path.isdir(cwd):
             # Relative paths in SQL and Python resolve against the notebook's folder, as in Jupyter.
             os.chdir(cwd)
-        capture = pyexec.Capture(self._table_output)
+        emit = None
+        notify = self.notify
+        if stream is not None and notify is not None:
+            emit = lambda update: notify("output", {"stream": stream, **update})  # noqa: E731
+        capture = pyexec.Capture(self._table_output, emit)
         saved = sys.stdout, sys.stderr
         sys.stdout = pyexec.StreamWriter(capture, "stdout")
         sys.stderr = pyexec.StreamWriter(capture, "stderr")
@@ -131,8 +142,16 @@ class Kernel:
                 ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(self._thread_id), None)
             pyexec.current = None
             sys.stdout, sys.stderr = saved
+            capture.finish()  # before the reply, which says the cell is done
             with contextlib.suppress(duckdb.Error):
                 self.session.refresh_current_database()
+
+    @staticmethod
+    def _reply(capture: pyexec.Capture, error: dict | None) -> dict:
+        """A cell's reply: its outputs, or how many there were when they were streamed."""
+        if capture.streamed:
+            return {"streamed": len(capture.outputs), "error": error}
+        return {"outputs": capture.outputs, "error": error}
 
     def interrupt(self) -> bool:
         """Called from the reader thread. Stops a running query and, for Python cells, raises KeyboardInterrupt."""
@@ -146,10 +165,10 @@ class Kernel:
                 )
             return True
 
-    def execute_sql(self, notebook: str, code: str, cwd: str | None = None) -> dict:
+    def execute_sql(self, notebook: str, code: str, cwd: str | None = None, stream: Any = None) -> dict:
         state = self.notebook(notebook)
         error = None
-        with self._running("sql", cwd) as capture:
+        with self._running("sql", cwd, stream) as capture:
             started = time.perf_counter()
             try:
                 local_vars = {"con": self.session.con, "query": code}
@@ -178,12 +197,12 @@ class Kernel:
                 error = _interrupted()
             except Exception as exc:
                 error = {"ename": type(exc).__name__, "evalue": str(exc), "traceback": ""}
-        return {"outputs": capture.outputs, "error": error}
+        return self._reply(capture, error)
 
-    def execute_python(self, notebook: str, code: str, cwd: str | None = None) -> dict:
+    def execute_python(self, notebook: str, code: str, cwd: str | None = None, stream: Any = None) -> dict:
         state = self.notebook(notebook)
         error = None
-        with self._running("python", cwd) as capture:
+        with self._running("python", cwd, stream) as capture:
             try:
                 self._materialize_pending(state)
                 pyexec.run_cell(code, state.namespace)
@@ -198,7 +217,7 @@ class Kernel:
                     pyexec.flush_figures()
                 except Exception as exc:
                     capture.stream("stderr", f"Could not render figure: {exc}\n")
-        return {"outputs": capture.outputs, "error": error}
+        return self._reply(capture, error)
 
     def run_statements(self, statements: list[str], cwd: str | None = None) -> dict:
         """Runs the statements of a .sql file (or of the selection in one) in order on the main
