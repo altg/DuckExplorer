@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { runTests } from '@vscode/test-electron';
+import { annotateFailure } from './annotate';
 
 async function main(): Promise<void> {
   const extensionDevelopmentPath = path.resolve(__dirname, '..');
@@ -11,6 +12,8 @@ async function main(): Promise<void> {
     });
   } catch (err) {
     console.error('Extension tests failed:', err);
+    // Also when VS Code couldn't be downloaded or started, before any test ran.
+    annotateFailure('VS Code integration tests', err);
     process.exit(1);
   }
 }

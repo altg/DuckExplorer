@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import Mocha from 'mocha';
+import { annotateFailure } from '../annotate';
 
 export function run(): Promise<void> {
   const mocha = new Mocha({ ui: 'tdd', color: true, timeout: 180_000 });
@@ -8,6 +9,8 @@ export function run(): Promise<void> {
     mocha.addFile(path.join(__dirname, file));
   }
   return new Promise((resolve, reject) => {
-    mocha.run((failures) => (failures ? reject(new Error(`${failures} test(s) failed`)) : resolve()));
+    const runner = mocha.run((failures) => (failures ? reject(new Error(`${failures} test(s) failed`)) : resolve()));
+    // Each failing test (or hook) is an annotation on a CI run.
+    runner.on('fail', (test, err) => annotateFailure(test.fullTitle(), err));
   });
 }
