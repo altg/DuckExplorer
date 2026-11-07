@@ -58,7 +58,8 @@ Python (Plotly, Altair or Matplotlib) in the same notebook.
   - SQL cells can query DataFrames created in Python cells by name.
   - Python helpers: `con` (the DuckDB connection), `sql("…")` → DataFrame, `display(obj)`.
   - Output shows while a cell runs: printed lines, `display()`, `plt.show()` and `fig.show()` appear
-    as they happen (a loop of prints a few times a second), not only when the cell is done.
+    as they happen (a loop of prints a few times a second), not only when the cell is done. A cell's
+    printed text is kept up to 1,000,000 characters; a line says where it stops.
   - Charts: Plotly figures render interactively; Altair charts (and anything else that displays as
     Vega-Lite) render with Vega-Lite, including `chart.show()`; Matplotlib/Seaborn figures render as
     PNGs (`plt.show()` or the end of the cell). Plotly and Altair follow the VS Code light/dark theme.

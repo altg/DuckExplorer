@@ -22,7 +22,7 @@ class ExportFailed(Exception):
 def check_format(file_format: str, row_count: int | None = None) -> None:
     """Fails before anything is written: an unknown format, or more rows than an Excel sheet holds."""
     if file_format not in _OPTIONS:
-        raise ValueError(f"Unknown export format {file_format!r}")
+        raise ExportFailed(f"Unknown export format {file_format!r}: export to csv, parquet or xlsx.")
     if file_format == "xlsx" and row_count is not None and row_count > EXCEL_MAX_ROWS:
         raise ExportFailed(_too_many_rows(f"these are {row_count:,}"))
 

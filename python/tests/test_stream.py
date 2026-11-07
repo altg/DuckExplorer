@@ -1,8 +1,11 @@
 """Outputs of a running cell, sent as `output` notifications (pyexec.Capture with emit)."""
 
 import threading
+import time
 
 import pytest
+
+from duckexplorer_kernel import pyexec
 
 
 class Listener:
@@ -97,6 +100,31 @@ def test_nothing_is_sent_after_the_cell_ends(kernel):
     count = len(listener.updates)
     kernel.execute_python("nb", "out.write('late\\n')")
     assert len(listener.updates) == count
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_many_small_prints_take_time_in_proportion(kernel, streamed):
+    # 400,000 prints are 800,000 writes. Adding each to the text copied it every time: about a minute.
+    listener = Listener(kernel) if streamed else None
+    started = time.perf_counter()
+    reply = kernel.execute_python("nb", "for i in range(400_000):\n    print('x')", stream=listener and listener.stream)
+    assert time.perf_counter() - started < 10
+    assert reply["error"] is None
+    text = listener.text() if listener else reply["outputs"][0]["text"]
+    assert text == "x\n" * 400_000
+
+
+def test_printed_text_stops_at_the_limit(kernel, monkeypatch):
+    monkeypatch.setattr(pyexec, "MAX_STREAM_TEXT", 1000)
+    listener = Listener(kernel)
+    code = "import sys\nfor i in range(1000):\n    print('line', i)\nprint('more', file=sys.stderr)\ndisplay(42)"
+    reply = kernel.execute_python("nb", code, stream=listener.stream)
+    assert reply == {"streamed": 2, "error": None}
+    stdout, shown = listener.outputs
+    kept, note = stdout["text"][:1000], stdout["text"][1000:]
+    assert kept == "".join(f"line {i}\n" for i in range(1000))[:1000]
+    assert note == "\n… printed output stops here: the cell printed more than 1,000 characters.\n"
+    assert shown == {"type": "text", "text": "42"}  # outputs other than text still show
 
 
 @pytest.mark.parametrize("stream", [None, 3])

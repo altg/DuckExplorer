@@ -18,6 +18,8 @@ import traceback
 from typing import Any, Callable
 
 MAX_TEXT_OUTPUT = 200_000
+# A cell's printed text (stdout and stderr together) is kept up to this many characters.
+MAX_STREAM_TEXT = 1_000_000
 # Stream text written in a burst is sent at most this often while a cell runs.
 STREAM_INTERVAL = 0.1
 
@@ -29,29 +31,53 @@ class Capture:
     (`{"index": i, "output": …}`), and text written to a stream output after that
     (`{"index": i, "text": …}`), batched so a loop of prints sends a few messages a second. finish()
     sends what is still waiting; nothing is sent after it. Writes may come from other threads.
+
+    Writes to the last output, a stream, are collected as pieces and joined when the outputs are sent or
+    read, so a loop of many small prints costs time in proportion to what it prints (adding each piece to
+    the text would copy the text every time). Printed text stops at MAX_STREAM_TEXT characters, with a
+    line that says so; outputs other than text still show after that.
     """
 
     def __init__(self, table_output: Callable[[Any], dict | None], emit: Callable[[dict], None] | None = None) -> None:
-        self.outputs: list[dict] = []
+        self._outputs: list[dict] = []
         self._table_output = table_output
         self._emit = emit
         self.streamed = emit is not None
         self._lock = threading.RLock()
+        # Text written to the last output (a stream) that isn't in its "text" yet.
+        self._pieces: list[str] = []
+        # Characters of printed text kept so far; once the limit is reached, later text is left out.
+        self._stream_chars = 0
+        self._truncated = False
         # outputs[:_sent] have been sent; of the last of them, a stream, _sent_text characters.
         self._sent = 0
         self._sent_text = 0
         self._last_flush = 0.0
         self._timer: threading.Timer | None = None
 
+    @property
+    def outputs(self) -> list[dict]:
+        with self._lock:
+            self._join()
+            return self._outputs
+
     def stream(self, name: str, text: str) -> None:
         if not text:
             return
         with self._lock:
-            last = self.outputs[-1] if self.outputs else None
+            if self._truncated:
+                return
+            room = MAX_STREAM_TEXT - self._stream_chars
+            if len(text) > room:
+                self._truncated = True
+                text = text[:room] + f"\n… printed output stops here: the cell printed more than {MAX_STREAM_TEXT:,} characters.\n"
+            self._stream_chars += len(text)
+            last = self._outputs[-1] if self._outputs else None
             if last and last["type"] == "stream" and last["name"] == name:
-                last["text"] += text
+                self._pieces.append(text)
             else:
-                self.outputs.append({"type": "stream", "name": name, "text": text})
+                self._join()
+                self._outputs.append({"type": "stream", "name": name, "text": text})
             if self._emit is None or self._timer is not None:
                 return
             wait = self._last_flush + STREAM_INTERVAL - time.monotonic()
@@ -64,7 +90,8 @@ class Capture:
 
     def add(self, output: dict) -> None:
         with self._lock:
-            self.outputs.append(output)
+            self._join()
+            self._outputs.append(output)
             if self._emit is not None:
                 self._flush()
 
@@ -94,17 +121,25 @@ class Capture:
             self._timer.cancel()
             self._timer = None
         self._last_flush = time.monotonic()
+        self._join()
+        outputs = self._outputs
         if self._sent:
-            last = self.outputs[self._sent - 1]
+            last = outputs[self._sent - 1]
             if last["type"] == "stream" and len(last["text"]) > self._sent_text:
                 emit({"index": self._sent - 1, "text": last["text"][self._sent_text :]})
                 self._sent_text = len(last["text"])
-        while self._sent < len(self.outputs):
-            output = self.outputs[self._sent]
+        while self._sent < len(outputs):
+            output = outputs[self._sent]
             # A copy: a stream's text grows after it is sent.
             emit({"index": self._sent, "output": dict(output)})
             self._sent += 1
             self._sent_text = len(output["text"]) if output["type"] == "stream" else 0
+
+    def _join(self) -> None:
+        """Adds the pieces written to the last output to its text. Call with the lock held."""
+        if self._pieces:
+            self._outputs[-1]["text"] += "".join(self._pieces)
+            self._pieces.clear()
 
 
 class StreamWriter(io.TextIOBase):

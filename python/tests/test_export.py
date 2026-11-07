@@ -100,7 +100,7 @@ def test_a_file_that_cannot_be_written(kernel, tmp_path):
     result_id = run(kernel, "SELECT 1 AS a")
     with pytest.raises(ExportFailed, match="IO Error"):
         kernel.export_result(result_id, str(tmp_path / "no such folder" / "x.parquet"), "parquet")
-    with pytest.raises(ValueError, match="Unknown export format"):
+    with pytest.raises(ExportFailed, match="Unknown export format"):
         kernel.export_result(result_id, str(tmp_path / "x.json"), "json")
 
 
