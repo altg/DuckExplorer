@@ -42,21 +42,33 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-/** Explains a kernel that died during startup, offering the fix for missing packages. */
+/**
+ * The duckdb the kernel works with: DuckDB 2 changed the Python API it uses. The kernel checks this at
+ * startup (python/duckexplorer_kernel/requirements.py) and prints UNSUPPORTED_DUCKDB.
+ */
+const DUCKDB_REQUIREMENT = 'duckdb<2';
+const UNSUPPORTED_DUCKDB = /DuckExplorer needs duckdb 1\.x, and this Python has duckdb (\S+?)\.?\s/;
+
+/** Explains a kernel that died during startup, offering the fix for missing or unsupported packages. */
 export async function reportStartupFailure(python: string, stderr: string): Promise<void> {
   const missing = /No module named '([^'.]+)/.exec(stderr)?.[1];
-  const install = 'Install packages';
+  const unsupported = UNSUPPORTED_DUCKDB.exec(stderr)?.[1];
+  const install = unsupported ? `Install ${DUCKDB_REQUIREMENT}` : 'Install packages';
   const choose = 'Select interpreter';
   const showLog = 'Show log';
-  const message = missing
-    ? `DuckExplorer: the Python package '${missing}' is missing from ${python}. The kernel needs duckdb and pyarrow (pandas, matplotlib, plotly and altair are optional).`
-    : `DuckExplorer: the kernel failed to start with ${python}.`;
+  const message = unsupported
+    ? `DuckExplorer: the kernel needs duckdb 1.x, and ${python} has duckdb ${unsupported}. DuckDB 2 isn't supported yet.`
+    : missing
+      ? `DuckExplorer: the Python package '${missing}' is missing from ${python}. The kernel needs duckdb and pyarrow (pandas, matplotlib, plotly and altair are optional).`
+      : `DuckExplorer: the kernel failed to start with ${python}.`;
   const choice = await vscode.window.showErrorMessage(message, install, choose, showLog);
   if (choice === install) {
     const terminal = vscode.window.createTerminal('DuckExplorer: install packages');
     terminal.show();
     const quoted = !python.includes(' ') ? python : process.platform === 'win32' ? `& "${python}"` : `"${python}"`;
-    terminal.sendText(`${quoted} -m pip install --upgrade duckdb pyarrow pandas matplotlib plotly altair`);
+    // Quoted for the shell: < is a redirection otherwise (PowerShell, cmd, bash and zsh alike).
+    const packages = unsupported ? `"${DUCKDB_REQUIREMENT}"` : `"${DUCKDB_REQUIREMENT}" pyarrow pandas matplotlib plotly altair`;
+    terminal.sendText(`${quoted} -m pip install --upgrade ${packages}`);
   } else if (choice === choose) {
     await vscode.commands.executeCommand('python.setInterpreter');
   } else if (choice === showLog) {

@@ -58,10 +58,14 @@ def test_frames_are_the_notebooks_dataframes_and_tables(kernel):
     frames = {f["name"]: f["columns"] for f in kernel.sql_catalog("nb")["frames"]}
     assert set(frames) == {"df", "totals", "targets", "rel"}
     assert frames["totals"] == [{"name": "id", "type": "INTEGER"}, {"name": "label", "type": "VARCHAR"}]
+    # pandas 3 keeps parsed times in microseconds (TIMESTAMP), pandas 2 in nanoseconds (TIMESTAMP_NS).
+    import pandas as pd
+
+    when = "TIMESTAMP" if int(pd.__version__.split(".")[0]) >= 3 else "TIMESTAMP_NS"
     assert frames["targets"] == [
         {"name": "category", "type": "VARCHAR"},
         {"name": "goal", "type": "DOUBLE"},
-        {"name": "when", "type": "TIMESTAMP"},
+        {"name": "when", "type": when},
     ]
     assert frames["rel"] == [{"name": "answer", "type": "BIGINT"}]
     # Other notebooks have their own namespaces.

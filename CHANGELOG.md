@@ -82,6 +82,10 @@ Milestone 2, DuckDB UI parity.
   failure.
 - A histogram-bar filter let in values outside the histogram's range once the filter it was made
   under was removed.
+- With DuckDB 2.0 installed (what `pip install duckdb` gives since its release), most features
+  failed one by one, since it changed the Python API the kernel uses. The kernel now needs duckdb
+  1.x and says so when it starts, and the extension offers to install `duckdb<2`, as its Install
+  packages button now does too. DuckDB 2.0 support is planned for milestone 3.
 - Printing in a loop slowed down with the square of the output (300,000 lines took over a minute).
 - The kernel kept running after VS Code went away while a cell was running.
 
