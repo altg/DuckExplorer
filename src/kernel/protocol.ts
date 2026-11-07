@@ -27,6 +27,8 @@ export interface TableResult {
   boundTo?: string[];
   /** Table summaries of large relations: the result is a random sample of this many rows. */
   sampledFrom?: number;
+  /** Live previews: the result is the query's first rows, and it has more. */
+  truncated?: boolean;
 }
 
 export type KernelOutput =
@@ -346,9 +348,45 @@ export type ResultsMessage =
   | { type: 'running'; source: RunSource }
   | { type: 'result'; source: RunSource; result: StatementsResult }
   /** The kernel couldn't run the statements (it failed to start, or stopped). */
-  | { type: 'failed'; source: RunSource; message: string };
+  | { type: 'failed'; source: RunSource; message: string }
+  | PreviewMessage;
 
-export type ResultsAction = { type: 'ready' } | { type: 'cancel' } | { type: 'reveal' };
+/**
+ * The live preview of the query at the cursor (src/sql/livePreview.ts): its first rows; or why it has
+ * none, where the last rows stay, dimmed (an error as the query is written); or a note where nothing ran.
+ */
+export interface PreviewMessage {
+  type: 'preview';
+  source: PreviewSource;
+  table?: TableResult;
+  error?: string;
+  note?: string;
+}
+
+export interface PreviewSource {
+  /** Where the query is, e.g. "orders.sql:12" or "demo.duckbook, cell 3". */
+  label: string;
+  /** The statement at the cursor. */
+  sql: string;
+  /** Its CTEs, by name, and the one previewed (undefined for the statement's own rows). */
+  ctes: string[];
+  cte?: string;
+}
+
+/** What previewSql returns (python/duckexplorer_kernel/kernel.py, preview_sql). */
+export interface PreviewReply {
+  table?: TableResult;
+  error?: { ename: string; evalue: string };
+  /** Not run: "not a query", "side effects", or "busy" (a cell runs), "superseded" (by newer work), "interrupted". */
+  skipped?: string;
+}
+
+export type ResultsAction =
+  | { type: 'ready' }
+  | { type: 'cancel' }
+  | { type: 'reveal' }
+  /** A CTE chip of the preview's header: the CTE to preview (undefined: the statement's own rows). */
+  | { type: 'previewPart'; cte?: string };
 
 export interface RendererResponse {
   type: 'response';

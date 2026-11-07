@@ -20,6 +20,9 @@ export class SqlResultsView implements vscode.WebviewViewProvider {
   /** The last message for the page; sent again when it (re)loads. */
   private latest: ResultsMessage | undefined;
   private ready = false;
+  private readonly previewParts = new vscode.EventEmitter<string | undefined>();
+  /** A CTE chip of a live preview was clicked: the CTE to preview, undefined for the query's own rows. */
+  readonly onDidPickPreviewPart = this.previewParts.event;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -44,10 +47,13 @@ export class SqlResultsView implements vscode.WebviewViewProvider {
     });
   }
 
-  /** Shows `message`, revealing the view without taking the focus from the editor. */
-  async show(message: ResultsMessage): Promise<void> {
+  /** Shows `message`, revealing the view (unless `reveal` is false) without taking the focus from the editor. */
+  async show(message: ResultsMessage, reveal = true): Promise<void> {
     this.latest = message;
     if (this.view && this.ready) void this.view.webview.postMessage(message);
+    if (!reveal) {
+      return;
+    }
     if (this.view) {
       if (!this.view.visible) this.view.show(true);
     } else {
@@ -74,6 +80,9 @@ export class SqlResultsView implements vscode.WebviewViewProvider {
         break;
       case 'reveal':
         this.handlers.reveal();
+        break;
+      case 'previewPart':
+        this.previewParts.fire((message as Extract<ResultsAction, { type: 'previewPart' }>).cte);
         break;
     }
   }

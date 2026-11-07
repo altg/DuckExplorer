@@ -241,16 +241,23 @@ function columnIcon(type: string): string {
   return 'symbol-field';
 }
 
-/** Shortest name that resolves to the relation: drops the default database and the main schema. */
-export function qualifiedName(node: {
+type RelationRef = {
   db: Pick<DatabaseNode, 'name'>;
   schema: Pick<SchemaNode, 'name'>;
   relation: Pick<RelationNode, 'name'>;
   current: boolean;
-}): string {
+};
+
+/** Shortest name that resolves to the relation: drops the default database and the main schema. */
+export function qualifiedName(node: RelationRef): string {
+  return nameParts(node).map(quoteIdentifier).join('.');
+}
+
+/** The parts of the relation's qualified name, unquoted. */
+export function nameParts(node: RelationRef): string[] {
   const parts: string[] = [];
   if (!node.current) parts.push(node.db.name);
   if (node.schema.name !== 'main' || !node.current) parts.push(node.schema.name);
   parts.push(node.relation.name);
-  return parts.map(quoteIdentifier).join('.');
+  return parts;
 }

@@ -52,8 +52,9 @@ export class SqlCatalog implements vscode.Disposable {
   /**
    * Names for completions in `notebook`; undefined while the kernel has never answered. Without
    * `startKernel` (a .sql file, which may not be DuckDB's at all), only a running kernel is asked.
+   * With `current`, waits for names that are up to date (Write SQL) rather than making do with older ones.
    */
-  async snapshot(notebook: string | undefined, startKernel = true): Promise<CatalogSnapshot | undefined> {
+  async snapshot(notebook: string | undefined, startKernel = true, current = false): Promise<CatalogSnapshot | undefined> {
     if (!startKernel && !this.kernel.isRunning) {
       return undefined;
     }
@@ -61,7 +62,7 @@ export class SqlCatalog implements vscode.Disposable {
     if (!this.fresh.has(key)) {
       const load = this.loading.get(key) ?? this.load(key);
       // With names cached, a busy kernel (say, summarizing a large table) doesn't hold completions up.
-      await Promise.race([load, delay(this.schema ? WAIT_CACHED_MS : WAIT_FIRST_MS)]);
+      await Promise.race([load, delay(this.schema && !current ? WAIT_CACHED_MS : WAIT_FIRST_MS)]);
     }
     if (!this.schema) {
       return undefined;

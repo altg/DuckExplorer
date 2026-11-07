@@ -67,3 +67,48 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* The live preview: its badge, and a chip for the query and each of its CTEs. */
+.dx-preview-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 2px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.dx-preview-parts {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 50%;
+}
+
+.dx-chip {
+  padding: 0 8px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
+  border-radius: 9px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.dx-chip:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.dx-chip.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.dx-chip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}

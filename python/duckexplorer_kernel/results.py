@@ -15,6 +15,8 @@ from . import profile as column_profile
 from .session import Session, quote_ident
 
 MAX_RESULTS = 20
+# Live previews, kept apart so that they don't push results out: the one shown, and the one before.
+MAX_PREVIEWS = 2
 # Sorted/filtered views and filtered profiles kept per result; the grid only shows one at a time.
 MAX_VIEWS = 3
 MAX_PROFILES = 2
@@ -51,12 +53,13 @@ class ResultStore:
         self._session = session
         self._capacity = capacity
         self._results: OrderedDict[str, StoredResult] = OrderedDict()
+        self._previews: OrderedDict[str, StoredResult] = OrderedDict()
         self._lock = threading.Lock()
         # Ids are unique per kernel process, so a restarted kernel can't serve another run's rows.
         self._prefix = secrets.token_hex(3)
         self._next_id = 1
 
-    def add(self, table: pa.Table, types: list[str] | None = None) -> StoredResult:
+    def add(self, table: pa.Table, types: list[str] | None = None, preview: bool = False) -> StoredResult:
         scan = table.rename_columns([f"c{i}" for i in range(table.num_columns)])
         if types is None:
             with self._session.side_lock:
@@ -66,14 +69,15 @@ class ResultStore:
             result_id = f"{self._prefix}-{self._next_id}"
             self._next_id += 1
             stored = StoredResult(result_id, table, scan, columns)
-            self._results[result_id] = stored
-            while len(self._results) > self._capacity:
-                self._results.popitem(last=False)
+            results, capacity = (self._previews, MAX_PREVIEWS) if preview else (self._results, self._capacity)
+            results[result_id] = stored
+            while len(results) > capacity:
+                results.popitem(last=False)
         return stored
 
     def get(self, result_id: str) -> StoredResult:
         with self._lock:
-            stored = self._results.get(result_id)
+            stored = self._results.get(result_id) or self._previews.get(result_id)
         if stored is None:
             raise ResultExpired(result_id)
         return stored

@@ -171,6 +171,36 @@
         "icon": "$(graph)"
       },
       {
+        "command": "duckexplorer.writeSql",
+        "title": "Write SQL from a Description…",
+        "shortTitle": "Write SQL",
+        "category": "DuckExplorer",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "duckexplorer.toggleLivePreview",
+        "title": "Toggle Live Preview",
+        "category": "DuckExplorer"
+      },
+      {
+        "command": "duckexplorer.startLivePreview",
+        "title": "Turn On Live Preview",
+        "category": "DuckExplorer",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "duckexplorer.stopLivePreview",
+        "title": "Turn Off Live Preview",
+        "category": "DuckExplorer",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "duckexplorer.showViewSql",
+        "title": "Show SQL",
+        "category": "DuckExplorer",
+        "icon": "$(code)"
+      },
+      {
         "command": "duckexplorer.exportTable",
         "title": "Export…",
         "category": "DuckExplorer",
@@ -301,14 +331,19 @@
           "group": "1_main@2"
         },
         {
+          "command": "duckexplorer.showViewSql",
+          "when": "view == duckexplorer.schema && viewItem =~ /^view/",
+          "group": "1_main@3"
+        },
+        {
           "command": "duckexplorer.exportTable",
           "when": "view == duckexplorer.schema && viewItem =~ /^(table|view)/",
-          "group": "1_main@3"
+          "group": "1_main@4"
         },
         {
           "command": "duckexplorer.copyName",
           "when": "view == duckexplorer.schema && viewItem != message",
-          "group": "1_main@4"
+          "group": "1_main@5"
         },
         {
           "command": "duckexplorer.detachDatabase",
@@ -381,6 +416,10 @@
           "when": "false"
         },
         {
+          "command": "duckexplorer.showViewSql",
+          "when": "false"
+        },
+        {
           "command": "duckexplorer.exportTable",
           "when": "false"
         },
@@ -435,6 +474,43 @@
         {
           "command": "duckexplorer.runFile",
           "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+        },
+        {
+          "command": "duckexplorer.startLivePreview",
+          "when": "false"
+        },
+        {
+          "command": "duckexplorer.stopLivePreview",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "duckexplorer.startLivePreview",
+          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles && !config.duckexplorer.livePreview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "duckexplorer.stopLivePreview",
+          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles && config.duckexplorer.livePreview",
+          "group": "navigation@1"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "duckexplorer.writeSql",
+          "when": "notebookType == duckexplorer-notebook",
+          "group": "navigation@10"
+        },
+        {
+          "command": "duckexplorer.startLivePreview",
+          "when": "notebookType == duckexplorer-notebook && !config.duckexplorer.livePreview",
+          "group": "navigation@11"
+        },
+        {
+          "command": "duckexplorer.stopLivePreview",
+          "when": "notebookType == duckexplorer-notebook && config.duckexplorer.livePreview",
+          "group": "navigation@11"
         }
       ],
       "editor/title/run": [
@@ -450,6 +526,11 @@
         }
       ],
       "editor/context": [
+        {
+          "command": "duckexplorer.writeSql",
+          "when": "editorLangId == sql && (notebookEditorFocused || config.duckexplorer.sqlFiles)",
+          "group": "duckexplorer@0"
+        },
         {
           "command": "duckexplorer.runStatement",
           "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles",
@@ -525,6 +606,16 @@
           "type": "boolean",
           "default": true,
           "description": "Run .sql files with DuckDB: a Run button above each statement and in the editor title, Ctrl+Enter (the statement at the cursor or the selection) and Ctrl+Shift+Enter (the file), and completions while the kernel runs."
+        },
+        "duckexplorer.livePreview": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Live preview, like DuckDB's Instant SQL: the query at the cursor in a SQL cell or `.sql` file runs as you write it, and the DuckDB Results view (in the panel) shows its first 100 rows. With the cursor in one of its CTEs, it shows that CTE's rows. Only queries run: nothing that changes the database, and a preview that takes more than 5 seconds is stopped."
+        },
+        "duckexplorer.languageModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The language model that **Write SQL from a Description** asks, by its id, family or name, from the models VS Code offers (GitHub Copilot's, or another extension's). Empty: the only one, or the one you pick the first time. The request, the names and types of your tables, views, columns and DataFrames (with their comments) and the SQL around the cursor go to the model's provider; no rows do."
         },
         "duckexplorer.historySize": {
           "type": "number",

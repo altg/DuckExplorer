@@ -184,6 +184,16 @@ class Session:
 
     # -- catalog -------------------------------------------------------------------
 
+    def view_sql(self, database: str, schema: str, name: str) -> str | None:
+        """A view's CREATE VIEW statement as DuckDB keeps it (normalized, on one line, without the comments
+        it was written with), or None when there is no such view."""
+        with self.side_lock:
+            rows = self.side.execute(
+                "SELECT sql FROM duckdb_views() WHERE database_name = $db AND schema_name = $schema AND view_name = $name",
+                {"db": database, "schema": schema, "name": name},
+            ).fetchall()
+        return rows[0][0] if rows else None
+
     def schema(self, include_temp: bool = False) -> dict:
         """Database → schema → table/view → column tree for every user database, and for `temp`
         (temporary tables and views) when include_temp is set."""

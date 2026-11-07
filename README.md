@@ -75,6 +75,10 @@ Python (Plotly, Altair or Matplotlib) in the same notebook.
   every row that matches the filter. **Refresh** reads the rows again. **Export…** on a table or view
   in the Databases view saves all of it.
 - **Preview Table** from the tree adds and runs `SELECT * … LIMIT 100` in the active notebook.
+- **Show SQL** on a view in the Databases view opens its definition in a read-only SQL editor. DuckDB
+  keeps a view's SQL rewritten in its own words (`count_star()`, `~~` for `LIKE`), on one line,
+  without the comments it was written with; DuckExplorer lays it out again, a clause per line, with
+  long select lists an item per line and CTEs and subqueries indented.
 - **Dropped files**: drag files from the Explorer (or your file manager) onto the Databases view, or
   right-click them in the Explorer and choose **Open in DuckExplorer**. A `.duckdb`, `.ddb` or `.db`
   file is attached read-write, as with **Add Database**. A `.csv`, `.tsv`, `.parquet`, `.json`,
@@ -99,6 +103,30 @@ Python (Plotly, Altair or Matplotlib) in the same notebook.
   with notebooks, so a temporary table made in one is visible in the other, and relative paths
   resolve against the file's folder. Completions work as in notebook cells once the kernel is
   running (a `.sql` file alone doesn't start it). Turn all of this off with `duckexplorer.sqlFiles`.
+- **Live preview**, like DuckDB's Instant SQL: turn it on with the eye button in a `.sql` editor's
+  title bar or the notebook's toolbar, the **Live Preview** item in the status bar, or
+  `duckexplorer.livePreview`. Then the query at the cursor runs as you write it (once typing pauses),
+  and **DuckDB Results** shows its first 100 rows, with the grid's sorting, filters, Column Explorer
+  and Chart view. **CTE inspection**: with the cursor in one of a `WITH` query's CTEs, it shows that
+  CTE's rows (the CTEs before it, then `SELECT * FROM` it); the chips above the grid move the cursor
+  to the query or another CTE. While the query is half written, DuckDB's error shows above the last
+  rows, dimmed. Only queries run (`SELECT`, `FROM`, `WITH`, `VALUES`, `DESCRIBE`…): an `INSERT`,
+  `CREATE` or `COPY` doesn't, nor a query that calls `nextval` or `setseed`. A preview stops after 5
+  seconds and as soon as a cell or statement is run, and waits while one runs. Previews don't go
+  into the query history or `df`, and don't push a cell's result out of the kernel. The setting
+  holds in every workspace, so in a `.sql` file (which may not be DuckDB's) the preview runs only
+  while the kernel is running; turning it on from a `.sql` editor starts the kernel.
+- **Write SQL from a Description**: write what you want as a comment, such as
+  `-- customers who bought books and toys`, and a language model that VS Code provides, such as
+  GitHub Copilot's, writes the DuckDB SQL below it. Run a SQL cell that holds only the comment (the
+  query then runs too, when it is a query DuckDB accepts), click **Write SQL** above a comment at the
+  end of a cell or `.sql` file, or use **Write SQL** in the notebook's toolbar or the editor's context
+  menu (which ask for the description, offering a comment on the cursor's line). The SQL runs as a
+  live preview in **DuckDB Results**; when DuckDB rejects it, the model is asked once more with
+  DuckDB's error. The model is
+  given the request, the SQL around the cursor, and the names and types of the tables, views, columns
+  and DataFrames the kernel knows (with their comments), but no rows. With several models, the first
+  one you pick is kept in `duckexplorer.languageModel`.
 - **Query History** (in the DuckExplorer view, below Databases): every query run in a notebook SQL
   cell or a `.sql` file, by day, newest first, with when it ran, how many rows it returned (or what
   it did, or its error) and how long it took. Hover over one to read all of it. Click it to open it
@@ -154,6 +182,8 @@ doesn't work, because the `code` command reads a relative path from the root of 
 | `duckexplorer.maxPandasRows` | 1,000,000 | Row cap when a SQL result is turned into a DataFrame (0 = never) |
 | `duckexplorer.sqlFiles` | true | Run buttons, Ctrl+Enter and completions in `.sql` files |
 | `duckexplorer.historySize` | 500 | Queries kept in each workspace's Query History (0 = don't record) |
+| `duckexplorer.livePreview` | false | Run the query at the cursor as you write it and show its first rows |
+| `duckexplorer.languageModel` | empty | The model (id, family or name) that writes SQL from a description |
 
 ## How it works
 
@@ -231,13 +261,27 @@ Notebook renderer (webview): results grid + Plotly and Vega-Lite (loaded on dema
   (`duckexplorer-history:`) that the `.sql` runner treats like a file, except that **Insert query**
   puts the new query in a new editor. Go to Source looks for the query's text in its file (the copy
   nearest to where it ran) or for a cell with that text.
+- A live preview asks the kernel for the first rows of one query (`previewSql`). The kernel parses
+  it first (`extract_statements`) and runs nothing but a single `SELECT`-type statement, as a
+  relation with a limit one row longer than shown, so it can say whether there are more. It runs on
+  the notebooks' connection, with the notebook's DataFrames, like a SQL cell; a timer interrupts it
+  after 5 seconds. Any other request for the main connection (a cell, a newer preview) interrupts it,
+  and a preview that arrives while a cell runs is turned away at once, to be asked again later. Its
+  rows go into a separate slot of the result store that keeps two. CTEs are found with the SQL
+  tokenizer; a CTE's preview is the statement up to that CTE, then `SELECT * FROM` it.
+- Write SQL uses VS Code's Language Model API (`vscode.lm`), so it works with whichever chat models
+  are installed and signed in, and asks for no API key. The prompt lists the schema from the
+  completions' catalog (the default database first; past about 24,000 characters, fewer columns
+  and then fewer tables, which the prompt says), and the SQL is checked by running it as a preview.
+- A view's SQL comes from `duckdb_views()`; `src/sql/format.ts` lays it out with the SQL tokenizer,
+  keeping every token as DuckDB wrote it.
 - `.duckbook` files are JSON. Table outputs store only their first page; after reopening a file
   or restarting the kernel, run the cell again to scroll further.
 
 Source layout: `src/kernel` (process + protocol), `src/explorer` (tree view and its drops, summary
 panel), `src/notebook` (serializer, controller and its streamed outputs, grid requests, export), `src/sql` (SQL tokenizer,
 cursor context, completions and parameter hints; dropped files as SQL; running `.sql` files and
-their results view),
+their results view; the live preview and its CTEs; Write SQL; the layout of a view's SQL),
 `src/history` (query history: entries, store, view),
 `src/renderer` (grid, filter bar and menus, Column Explorer, Chart view, Plotly and Vega-Lite, the
 pages of the summary panel and results view), `python/duckexplorer_kernel` (kernel; `chart.py` plans
@@ -247,7 +291,7 @@ the Chart view's charts), `samples` (demo database builder, notebook and `.sql` 
 
 ```bash
 npm run test:python   # kernel: pytest
-npm run test:unit     # SQL completion context, statement splitting, history entries, file paths: mocha, without VS Code
+npm run test:unit     # SQL completion context, statements, CTEs, view layout, prompts, history entries, file paths: mocha, without VS Code
 npm test              # VS Code integration test (downloads a test build of VS Code once)
 ```
 
@@ -266,6 +310,6 @@ npm run package   # duckexplorer-<version>.vsix: a minified build, the Python ke
   (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions, running
   `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and data
   files, streaming cell output, Altair/Vega-Lite output, and the Chart view ("Chart this").
-- **Milestone 3 (in progress):** DuckDB 2.0 support (done); Instant SQL-style live preview with CTE
-  inspection; a view's SQL definition from the schema tree; text-to-SQL.
+- **Milestone 3 (done, not yet released):** DuckDB 2.0 support, Instant SQL-style live preview with
+  CTE inspection, a view's SQL definition from the schema tree, and text-to-SQL.
 - **Milestone 4:** S3/HTTP secrets and MotherDuck; export notebooks to HTML or `.ipynb`.

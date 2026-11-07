@@ -1,6 +1,6 @@
 // The results view of .sql files (src/sql/resultsView.ts): what ran and how it went, with the
-// results grid for the last statement's rows.
-import type { ResultsAction, ResultsMessage, RunSource, StatementsResult } from '../kernel/protocol';
+// results grid for the last statement's rows; or the live preview of the query at the cursor.
+import type { PreviewMessage, ResultsAction, ResultsMessage, RunSource, StatementsResult } from '../kernel/protocol';
 import { ResultGrid } from './grid';
 import resultsCss from './results.css';
 import { el, formatDuration } from './util';
@@ -13,12 +13,18 @@ const header = el('header', 'dx-run-head');
 const main = el('main', 'dx-run-body');
 document.body.append(header, main);
 const keys = /Mac/.test(navigator.userAgent) ? 'Cmd+Enter' : 'Ctrl+Enter';
-main.append(el('div', 'dx-run-empty', `Run a statement of a .sql file (${keys}) to see its result here.`));
+main.append(
+  el('div', 'dx-run-empty', `Run a statement of a .sql file (${keys}) to see its result here, or turn on Live Preview to see the query at the cursor as you write it.`),
+);
 
 let shown: { controller: AbortController; grid?: ResultGrid } | undefined;
 
 onMessage((data) => {
   const message = data as ResultsMessage;
+  if (message?.type === 'preview') {
+    showPreview(message);
+    return;
+  }
   if (message?.type !== 'running' && message?.type !== 'result' && message?.type !== 'failed') return;
   renderHeader(message);
   if (message.type === 'running') {
@@ -51,10 +57,72 @@ onMessage((data) => {
   }
 });
 
+/**
+ * A live preview: its rows replace the last ones; an error (the query as it is being written) leaves
+ * them, dimmed; a note (nothing ran) clears them.
+ */
+function showPreview(message: PreviewMessage): void {
+  renderPreviewHeader(message);
+  if (message.error !== undefined) {
+    if (shown?.grid) {
+      main.classList.add('dx-stale');
+    } else {
+      main.replaceChildren(el('pre', 'dx-run-error', message.error));
+    }
+    return;
+  }
+  main.classList.remove('dx-stale');
+  shown?.controller.abort();
+  shown = { controller: new AbortController() };
+  if (!message.table) {
+    main.replaceChildren(el('div', 'dx-run-empty', message.note ?? ''));
+    return;
+  }
+  main.replaceChildren();
+  shown.grid = new ResultGrid(main, message.table, client, shown.controller.signal, {
+    maxHeight: availableHeight(),
+    queryCell: false,
+    exportable: false,
+  });
+}
+
+function renderPreviewHeader(message: PreviewMessage): void {
+  const { source } = message;
+  const badge = el('span', 'dx-preview-badge', 'Live preview');
+  badge.title = 'The first rows of the query at the cursor, as you write it (DuckExplorer: Toggle Live Preview)';
+  const where = el('button', 'dx-link dx-run-source', source.label);
+  where.title = 'Show the query in its editor';
+  where.addEventListener('click', () => send({ type: 'previewPart', cte: source.cte }));
+  const children: HTMLElement[] = [badge, where];
+  if (source.ctes.length) {
+    // CTE inspection: the query's own rows, or a CTE's.
+    const parts = el('div', 'dx-preview-parts');
+    parts.setAttribute('role', 'group');
+    parts.setAttribute('aria-label', 'Preview the query or one of its CTEs');
+    for (const cte of [undefined, ...source.ctes]) {
+      const chip = el('button', cte === source.cte ? 'dx-chip active' : 'dx-chip', cte ?? 'query');
+      chip.setAttribute('aria-pressed', String(cte === source.cte));
+      chip.title = cte === undefined ? "Preview the query's rows (puts the cursor in it)" : `Preview the rows of the CTE ${cte} (puts the cursor in it)`;
+      chip.addEventListener('click', () => send({ type: 'previewPart', cte }));
+      parts.append(chip);
+    }
+    children.push(parts);
+  }
+  const sql = el('code', 'dx-run-sql', shorten(source.sql));
+  sql.title = source.sql.length > 2000 ? `${source.sql.slice(0, 2000)}…` : source.sql;
+  children.push(sql);
+  if (message.error !== undefined) {
+    const status = el('span', 'dx-run-status dx-error', shorten(message.error.split('\n')[0]));
+    status.title = message.error;
+    children.push(status);
+  }
+  header.replaceChildren(...children);
+}
+
 window.addEventListener('resize', () => shown?.grid?.setMaxHeight(availableHeight()));
 send({ type: 'ready' });
 
-function renderHeader(message: ResultsMessage): void {
+function renderHeader(message: Exclude<ResultsMessage, PreviewMessage>): void {
   const { source } = message;
   const where = el('button', 'dx-link dx-run-source', source.label);
   where.title = 'Show the statement in its file';
