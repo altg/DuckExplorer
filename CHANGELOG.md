@@ -6,6 +6,22 @@ All notable changes to DuckExplorer are listed here. The format follows
 
 ## [Unreleased]
 
+Milestone 3, in progress.
+
+### Added
+
+- **DuckDB 2.0 support**: the kernel works with duckdb 1.x and 2.x (2.0 needs Python 3.11 or
+  later). The Install packages button installs `duckdb<3`, and with duckdb 3.0 or later the kernel
+  says at startup that it needs 1.x or 2.x and offers to install it. With duckdb 2, completions show
+  a table function's positional parameters by name (`read_csv(path)`), and New cell isn't available
+  for a `PRAGMA`'s rows, since DuckDB 2 no longer gives the query a `PRAGMA` stands for.
+- CI runs the tests with duckdb 1.x (Linux, Python 3.10) and 2.x (Linux and Windows, Python 3.13).
+
+### Changed
+
+- A statement whose only result says that it succeeded, such as `PRAGMA enable_profiling`, shows
+  "Statement executed" in a notebook rather than an empty grid, as other statements do.
+
 ## [0.2.0] - 2026-11-07
 
 Milestone 2, DuckDB UI parity.

@@ -43,11 +43,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * The duckdb the kernel works with: DuckDB 2 changed the Python API it uses. The kernel checks this at
- * startup (python/duckexplorer_kernel/requirements.py) and prints UNSUPPORTED_DUCKDB.
+ * The duckdb versions the kernel works with, 1.x and 2.x: a new major version may change the Python API
+ * it uses, as DuckDB 2 did. The kernel checks this at startup (python/duckexplorer_kernel/requirements.py)
+ * and prints UNSUPPORTED_DUCKDB.
  */
-const DUCKDB_REQUIREMENT = 'duckdb<2';
-const UNSUPPORTED_DUCKDB = /DuckExplorer needs duckdb 1\.x, and this Python has duckdb (\S+?)\.?\s/;
+const DUCKDB_REQUIREMENT = 'duckdb<3';
+const UNSUPPORTED_DUCKDB = /DuckExplorer needs duckdb 1\.x or 2\.x, and this Python has duckdb (\S+?)\.?\s/;
 
 /** Explains a kernel that died during startup, offering the fix for missing or unsupported packages. */
 export async function reportStartupFailure(python: string, stderr: string): Promise<void> {
@@ -57,7 +58,7 @@ export async function reportStartupFailure(python: string, stderr: string): Prom
   const choose = 'Select interpreter';
   const showLog = 'Show log';
   const message = unsupported
-    ? `DuckExplorer: the kernel needs duckdb 1.x, and ${python} has duckdb ${unsupported}. DuckDB 2 isn't supported yet.`
+    ? `DuckExplorer: the kernel needs duckdb 1.x or 2.x, and ${python} has duckdb ${unsupported}, which it doesn't support yet.`
     : missing
       ? `DuckExplorer: the Python package '${missing}' is missing from ${python}. The kernel needs duckdb and pyarrow (pandas, matplotlib, plotly and altair are optional).`
       : `DuckExplorer: the kernel failed to start with ${python}.`;

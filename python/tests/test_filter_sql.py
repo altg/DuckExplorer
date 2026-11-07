@@ -1,8 +1,10 @@
 """Grid filters written as SQL: for the WHERE box, and for a new cell that reruns the query filtered."""
 
+import duckdb
 import pytest
 
 from duckexplorer_kernel.filters import InvalidFilter
+from duckexplorer_kernel.requirements import duckdb_major
 
 MIXED = """
 SELECT range AS id,
@@ -124,7 +126,12 @@ def test_filtered_query_needs_a_query_to_wrap(kernel):
         kernel.filtered_query(result_id, "-- nothing here", None, None)
     with pytest.raises(InvalidFilter, match="subquery"):
         kernel.filtered_query(result_id, "EXPLAIN SELECT 1", None, None)
-    # DuckDB rewrites some PRAGMAs into queries, which wrap fine.
-    assert "pragma_version()" in kernel.filtered_query(result_id, "PRAGMA version", None, None)["code"]
+    if duckdb_major(duckdb.__version__) < 2:
+        # duckdb 1.x rewrites some PRAGMAs into queries, which wrap fine.
+        assert "pragma_version()" in kernel.filtered_query(result_id, "PRAGMA version", None, None)["code"]
+    else:
+        # 2.x keeps them PRAGMAs, which `FROM (…)` would read as a table name.
+        with pytest.raises(InvalidFilter, match="subquery"):
+            kernel.filtered_query(result_id, "PRAGMA version", None, None)
     with pytest.raises(InvalidFilter, match="doesn't parse"):
         kernel.filtered_query(result_id, "SELEC 1", None, None)

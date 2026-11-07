@@ -114,19 +114,21 @@ Python (Plotly, Altair or Matplotlib) in the same notebook.
 ## Requirements
 
 - VS Code 1.100+
-- Python 3.10+ with `duckdb` 1.x and `pyarrow` (required), and `pandas`, `matplotlib`, `plotly`,
-  `altair` (optional, for DataFrames and charts; the Chart view's New cell needs Altair or Plotly):
+- Python 3.10+ with `duckdb` 1.x or 2.x and `pyarrow` (required), and `pandas`, `matplotlib`,
+  `plotly`, `altair` (optional, for DataFrames and charts; the Chart view's New cell needs Altair or
+  Plotly):
 
   ```bash
-  python -m pip install "duckdb<2" pyarrow pandas matplotlib plotly altair
+  python -m pip install "duckdb<3" pyarrow pandas matplotlib plotly altair
   ```
 
-  DuckDB 2.0 isn't supported yet: it changed the Python API the kernel uses, so with it installed
-  the kernel doesn't start and says so.
+  DuckDB 2.0 needs Python 3.11 or later; with Python 3.10, pip installs duckdb 1.x. DuckDB 2.0
+  changed the Python API the kernel uses, and a later major version may too, so with duckdb 3.0 or
+  later the kernel doesn't start and says so.
 
   The kernel uses the `duckexplorer.pythonPath` setting, else the interpreter selected in the
-  Python extension, else `python` on PATH. If a package is missing, or duckdb is 2.0 or later,
-  DuckExplorer offers to install a supported version.
+  Python extension, else `python` on PATH. If a package is missing, or duckdb is newer than the
+  kernel supports, DuckExplorer offers to install a supported version.
 
 ## Run it from source
 
@@ -264,5 +266,6 @@ npm run package   # duckexplorer-<version>.vsix: a minified build, the Python ke
   (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions, running
   `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and data
   files, streaming cell output, Altair/Vega-Lite output, and the Chart view ("Chart this").
-- **Milestone 3 (next):** DuckDB 2.0 support; Instant SQL-style live preview with CTE inspection;
-  S3/HTTP secrets and MotherDuck; text-to-SQL; export notebooks to HTML or `.ipynb`.
+- **Milestone 3 (in progress):** DuckDB 2.0 support (done); Instant SQL-style live preview with CTE
+  inspection; a view's SQL definition from the schema tree; text-to-SQL.
+- **Milestone 4:** S3/HTTP secrets and MotherDuck; export notebooks to HTML or `.ipynb`.

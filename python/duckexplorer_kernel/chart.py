@@ -310,7 +310,7 @@ def _plan(side: duckdb.DuckDBPyConnection, source: str, columns: list[dict], kin
     plan = _Plan(chart, select, grouped, order, x_field, y_field, color_field)
 
     # How many rows the chart's data has, and what to show when there are too many.
-    total = side.sql(f"SELECT count(*) FROM ({_query(plan, source)})").fetchone()[0]
+    [(total,)] = side.sql(f"SELECT count(*) FROM ({_query(plan, source)})").fetchall()
     plan.rows = total
     if categories and color is None and total > MAX_BARS:
         plan.limit = plan.rows = MAX_BARS
@@ -414,7 +414,7 @@ def _stats(side: duckdb.DuckDBPyConnection, source: str, columns: list[dict], ki
             aggregates += [f"min(epoch_us({c}))", f"max(epoch_us({c}))"]
             aggregates += [f"bool_and({c} = date_trunc('{unit}', {c}))" for unit in TIME_UNITS]
             plan.append((i, "time"))
-    values = list(side.sql(f"SELECT {', '.join(aggregates)} FROM {source}").fetchone())
+    values = list(side.sql(f"SELECT {', '.join(aggregates)} FROM {source}").fetchall()[0])
     stats: dict = {"rows": values.pop(0), "distinct": [0] * len(columns), "time": {}}
     for i, what in plan:
         if what == "distinct":

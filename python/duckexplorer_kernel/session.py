@@ -55,9 +55,9 @@ class Session:
 
     def refresh_current_database(self) -> str:
         """Call on the main thread after anything that may have run USE or made temporary tables."""
-        self.current_database, self.current_schema = self.con.execute(
+        [(self.current_database, self.current_schema)] = self.con.execute(
             "SELECT current_database(), current_schema()"
-        ).fetchone()
+        ).fetchall()
         self.temp_relations = self._read_temp_relations()
         return self.current_database
 
@@ -115,9 +115,9 @@ class Session:
         if not os.path.isfile(path):
             raise FileNotFoundError(f"No such file: {path}")
         self.con.execute(f"ATTACH IF NOT EXISTS ':memory:' AS {quote_ident(FILES_DATABASE)}")
-        (db_path,) = self.con.execute(
+        [(db_path,)] = self.con.execute(
             "SELECT path FROM duckdb_databases() WHERE database_name = $db", {"db": FILES_DATABASE}
-        ).fetchone()
+        ).fetchall()
         if db_path:
             raise ValueError(
                 f'A database attached as "{FILES_DATABASE}" ({db_path}) is in the way: detach it to open data files.'

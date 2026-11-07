@@ -109,8 +109,19 @@ class Kernel:
 
     def _sql_helper(self, query: str) -> Any:
         """sql("SELECT …") -> pandas DataFrame (None for statements without a result)."""
-        rel = self.session.con.sql(query)
+        rel = self._rows_of(self.session.con.sql(query), query)
         return None if rel is None else rel.df()
+
+    def _rows_of(self, rel: duckdb.DuckDBPyRelation | None, query: str) -> duckdb.DuckDBPyRelation | None:
+        """sql()'s relation, or None for a statement without rows of its own: duckdb 2 returns its report
+        (a Count or Success column) where 1.x returns None."""
+        if rel is None:
+            return None
+        shape = [(name, str(type_)) for name, type_ in zip(rel.columns, rel.types)]
+        # The statement is parsed again only for a result of one column, as a report is.
+        if len(shape) == 1 and script.is_report(script.statement_kind(self.session.con, query), shape):
+            return None
+        return rel
 
     # -- execution -----------------------------------------------------------------
 
@@ -176,7 +187,7 @@ class Kernel:
                 local_vars = {"con": self.session.con, "query": code}
                 # Run with the notebook namespace as globals so SQL can scan its DataFrames.
                 exec(_SQL_STUB, state.namespace, local_vars)
-                rel = local_vars["rel"]
+                rel = self._rows_of(local_vars["rel"], code)
                 if rel is None:
                     elapsed = _ms_since(started)
                     capture.add({"type": "text", "text": f"Statement executed in {elapsed:,.0f} ms"})
@@ -277,7 +288,7 @@ class Kernel:
         started = time.perf_counter()
         with self.session.side_lock:
             side = self.session.side
-            count = side.execute(f"SELECT count(*) FROM {qualified}").fetchone()[0]
+            [(count,)] = side.execute(f"SELECT count(*) FROM {qualified}").fetchall()
             sample = f" USING SAMPLE reservoir({SUMMARY_ROWS} ROWS) REPEATABLE (42)" if count > SUMMARY_ROWS else ""
             rel = side.sql(f"SELECT * FROM {qualified}{sample}")
             table = rel.to_arrow_table()

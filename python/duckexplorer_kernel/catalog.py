@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import re
 import sys
+from collections import Counter
+from itertools import zip_longest
 from typing import Any
 
 import duckdb
 import pyarrow as pa
+
+from .requirements import duckdb_major
 
 # Overloads listed per function; date_trunc or strftime have a few, `+` has dozens.
 MAX_SIGNATURES = 8
@@ -17,16 +21,18 @@ MAX_FRAME_COLUMNS = 500
 
 _KINDS = ("scalar", "aggregate", "macro", "table", "table_macro")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# Table functions name their positional parameters col0, col1, …; the rest are `name := value`.
+# duckdb 1.x names table functions' positional parameters col0, col1, …; the rest are `name := value`.
 _POSITIONAL = re.compile(r"col\d+")
+# duckdb 2 names them too (`path`, `stop`). A development build without a version is taken to be the newest.
+_NAMES_POSITIONAL = (duckdb_major(duckdb.__version__) or 2) >= 2
 
 
 def functions_version(cur: duckdb.DuckDBPyConnection) -> str:
     """Changes when an extension is loaded or a macro is created or dropped."""
-    count, digest = cur.execute(
+    [(count, digest)] = cur.execute(
         "SELECT count(*), bit_xor(hash(database_name || '.' || schema_name || '.' || function_name || function_type))"
         " FROM duckdb_functions()"
-    ).fetchone()
+    ).fetchall()
     return f"{count}:{digest}"
 
 
@@ -42,24 +48,29 @@ def function_catalog(cur: duckdb.DuckDBPyConnection) -> dict:
         """,
         {"kinds": list(_KINDS)},
     ).fetchall()
-    functions: dict[tuple, dict] = {}
-    for name, kind, database, schema, internal, params, types, returns, varargs, description, examples in rows:
+    overloads: dict[tuple, list[tuple]] = {}
+    for row in rows:
+        name, kind, database, schema, _, _, types = row[:7]
         if not _IDENTIFIER.fullmatch(name) or "POINTER" in (types or []):
             continue  # operators, and internals such as arrow_scan(POINTER, …)
-        kind = "table" if kind == "table_macro" else kind
-        key = (name, kind, database, schema)
-        entry = functions.get(key)
-        if entry is None:
-            entry = functions[key] = {"name": name, "kind": kind, "signatures": []}
-            if not internal:
-                entry["database"], entry["schema"] = database, schema
-        if description and "description" not in entry:
-            entry["description"] = description
-        if examples and "example" not in entry:
-            entry["example"] = examples[0]
-        signature = _signature(kind, params or [], types or [], returns, varargs)
-        if signature not in entry["signatures"] and len(entry["signatures"]) < MAX_SIGNATURES:
-            entry["signatures"].append(signature)
+        key = (name, "table" if kind == "table_macro" else kind, database, schema)
+        overloads.setdefault(key, []).append(row)
+    positional = _positional_counts(overloads)
+    functions: dict[tuple, dict] = {}
+    for key, found in overloads.items():
+        name, kind, database, schema = key
+        entry = functions[key] = {"name": name, "kind": kind, "signatures": []}
+        if not found[0][4]:  # not internal
+            entry["database"], entry["schema"] = database, schema
+        for row, count in zip(found, positional[key]):
+            params, types, returns, varargs, description, examples = row[5:]
+            if description and "description" not in entry:
+                entry["description"] = description
+            if examples and "example" not in entry:
+                entry["example"] = examples[0]
+            signature = _signature(params or [], types or [], returns, varargs, count)
+            if signature not in entry["signatures"] and len(entry["signatures"]) < MAX_SIGNATURES:
+                entry["signatures"].append(signature)
     types = cur.execute(
         "SELECT DISTINCT type_name FROM duckdb_types() WHERE database_name = 'system' AND type_name <> 'null'"
     ).fetchall()
@@ -70,7 +81,43 @@ def function_catalog(cur: duckdb.DuckDBPyConnection) -> dict:
     }
 
 
-def _signature(kind: str, params: list, types: list, returns: Any, varargs: Any) -> dict:
+def _positional_counts(overloads: dict[tuple, list[tuple]]) -> dict[tuple, list[int]]:
+    """How many of each overload's parameters are positional; a table function's others are named
+    (`header := true`), and come after them.
+
+    duckdb 1.x names a table function's positional parameters col0, col1, …. duckdb 2 names them
+    (`path`, `stop`), so they are told apart by what named parameters are like: every overload of a
+    function has the same ones, last. A function with one overload has its named parameters from the
+    first one that functions with more overloads have as named (`sniff_csv(path, sep := …)`).
+    """
+    counts: dict[tuple, list[int]] = {}
+    shared: Counter[str] = Counter()  # how many functions have a parameter of this name as named
+    single = []
+    for key, found in overloads.items():
+        function_type = found[0][1]
+        lists = [list(zip_longest(row[5] or [], row[6] or [])) for row in found]
+        if function_type not in ("table", "table_macro"):
+            counts[key] = [len(params) for params in lists]
+        elif function_type == "table_macro" or not _NAMES_POSITIONAL:
+            # col0, col1, … are positional, the others named (all of a table macro's, which have names).
+            counts[key] = [sum(1 for name, _ in params if _POSITIONAL.fullmatch(name)) for params in lists]
+        elif len(lists) > 1:
+            suffix = 0
+            while all(len(p) > suffix for p in lists) and len({p[-1 - suffix] for p in lists}) == 1:
+                suffix += 1
+            counts[key] = [len(p) - suffix for p in lists]
+            shared.update(name for name, _ in lists[0][len(lists[0]) - suffix :])
+        else:
+            single.append((key, lists[0]))
+    # Named by one other function only isn't enough: a parameter overloaded by its type alone ends the
+    # list of read_duckdb's or parquet_bloom_probe's overloads.
+    named = {name for name, functions in shared.items() if functions > 1}
+    for key, params in single:
+        counts[key] = [next((i for i, (name, _) in enumerate(params) if name in named), len(params))]
+    return counts
+
+
+def _signature(params: list, types: list, returns: Any, varargs: Any, positional_count: int) -> dict:
     positional, named = [], []
     for i, name in enumerate(params):
         type_name = types[i] if i < len(types) else None
@@ -78,7 +125,7 @@ def _signature(kind: str, params: list, types: list, returns: Any, varargs: Any)
         if type_name:
             param["type"] = type_name
         # Unnamed parameters (col0, …) show as their type alone.
-        if kind == "table" and not _POSITIONAL.fullmatch(name):
+        if i >= positional_count:
             named.append(param)
         else:
             if _POSITIONAL.fullmatch(name):

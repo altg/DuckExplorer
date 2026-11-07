@@ -77,6 +77,16 @@ def test_statement_without_result(kernel):
     assert response["error"] is None
     [output] = response["outputs"]
     assert output["type"] == "text" and output["text"].startswith("Statement executed")
+    # duckdb 2's sql() returns a relation of the statement's report (Count, Success) where 1.x returns None.
+    for statement in ["UPDATE t SET x = x + 1", "SET threads = 2", "CREATE VIEW v AS SELECT 1", "PRAGMA disable_progress_bar"]:
+        [output] = kernel.execute_sql("nb", statement)["outputs"]
+        assert output["type"] == "text" and output["text"].startswith("Statement executed"), statement
+    # RETURNING gives rows, and so does a query of a column that happens to be named Count.
+    assert only_table(kernel.execute_sql("nb", "INSERT INTO t VALUES (5) RETURNING x"))["rows"] == [["5"]]
+    assert only_table(kernel.execute_sql("nb", 'SELECT count(*) AS "Count" FROM t'))["rows"] == [["3"]]
+    # So does sql() in Python.
+    response = kernel.execute_python("nb", "print(sql('CREATE TABLE u(y INTEGER)'), len(sql('SELECT * FROM t')))")
+    assert response["outputs"][0]["text"] == "None 3\n"
 
 
 def test_multiple_statements_return_last_result(kernel):

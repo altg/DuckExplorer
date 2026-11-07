@@ -47,6 +47,10 @@ class InvalidFilter(Exception):
     """A filter the kernel can't apply: bad SQL in the WHERE text, a value of the wrong type, …"""
 
 
+def _not_a_subquery() -> InvalidFilter:
+    return InvalidFilter("The cell's query can't be used as a subquery (EXPLAIN, CALL, PRAGMA, …).")
+
+
 def normalize(spec: dict | None) -> dict | None:
     """The spec with empty parts dropped, or None when it doesn't filter anything."""
     if not spec:
@@ -115,6 +119,10 @@ def last_statement(code: str) -> str:
         raise InvalidFilter(f"The cell's SQL doesn't parse any more: {exc}") from None
     if not statements:
         raise InvalidFilter("The cell has no SQL statement.")
+    if statements[-1].type.name == "PRAGMA":
+        # duckdb 1.x gives the query a PRAGMA stands for (SELECT * FROM pragma_version()); 2.x the PRAGMA,
+        # which `FROM (…)` reads as a table name.
+        raise _not_a_subquery()
     return _bare_statement(statements[-1].query)
 
 
@@ -131,7 +139,7 @@ def filtered_query(code: str, where: str, order_by: str) -> str:
     try:
         duckdb.extract_statements(text)
     except duckdb.Error:
-        raise InvalidFilter("The cell's query can't be used as a subquery (EXPLAIN, CALL, …).") from None
+        raise _not_a_subquery() from None
     return text
 
 
@@ -213,7 +221,8 @@ def _point_literals(
             render = "(make_timestamp(x) AT TIME ZONE 'UTC')::VARCHAR"
         else:
             render = "make_timestamp(x)::VARCHAR"
-        texts = side.execute(f"SELECT list_transform($v::BIGINT[], x -> {render})", {"v": micros}).fetchone()[0]
+        # A list comprehension: duckdb 2 refuses `x -> …` lambdas, and 1.x before 1.3 has no `lambda x: …`.
+        [(texts,)] = side.execute(f"SELECT [{render} for x in $v::BIGINT[]]", {"v": micros}).fetchall()
         return [quote_literal(text) for text in texts]
     scale = _DECIMAL_SCALE.match(t)
     if bin_unit(type_name):
