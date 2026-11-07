@@ -1,6 +1,7 @@
 """The Chart view of a result (chart.py): the chart chosen, its data and spec, and the code that keeps it."""
 
 import json
+import sys
 
 import pytest
 
@@ -208,7 +209,9 @@ def test_duplicate_names_and_empty_results(kernel):
     assert result["rows"] == 0 and result["note"] == "No rows to chart"
 
 
-def test_time_zones_and_decimals(kernel):
+def test_time_zones_and_decimals(kernel, monkeypatch):
+    # Without pytz (pandas 3 doesn't install it), DuckDB can't fetch TIMESTAMPTZ values as Python datetimes.
+    monkeypatch.setitem(sys.modules, "pytz", None)
     table = run(
         kernel,
         "SELECT TIMESTAMPTZ '2024-03-01 10:30:00+00' + INTERVAL (range) HOUR AS at, 1.25::DECIMAL(5, 2) AS price "

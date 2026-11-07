@@ -112,7 +112,7 @@ def chart_spec(side: duckdb.DuckDBPyConnection, scan: pa.Table, columns: list[di
         source = _preview_source(view, columns, kinds)
         plan = _plan(side, source, columns, kinds, request or {})
         query = _query(plan, source)
-        rel = side.sql(query)
+        rel = _local_times(side.sql(query))
         names = rel.columns
         rows = [dict(zip(names, map(_json_value, row))) for row in rel.fetchall()]
     except duckdb.Error as exc:
@@ -508,6 +508,17 @@ def _unique(name: str, used: set[str]) -> str:
         n += 1
         candidate = f"{name}_{n}"
     return candidate
+
+
+def _local_times(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
+    """TIMESTAMPTZ columns as local times (TIMESTAMP, in the session's time zone), as the chart shows them.
+    Fetched as they are, DuckDB makes zoned Python datetimes, which needs pytz (pandas 3 no longer
+    installs it)."""
+    zoned = [str(t) == "TIMESTAMP WITH TIME ZONE" for t in rel.types]
+    if not any(zoned):
+        return rel
+    names = [quote_ident(name) for name in rel.columns]
+    return rel.project(", ".join(f"{n}::TIMESTAMP AS {n}" if z else n for n, z in zip(names, zoned)))
 
 
 def _json_value(value: object) -> object:
