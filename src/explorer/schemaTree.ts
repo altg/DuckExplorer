@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { KernelClient } from '../kernel/kernelProcess';
+import { samePath } from './paths';
 import { ColumnNode, DatabaseNode, RelationNode, SchemaNode, SchemaTree } from '../kernel/protocol';
 import { quoteIdentifier } from '../sql/identifiers';
 
@@ -74,11 +75,6 @@ export class OpenedFiles {
 /** Whether a node is in the `files` database (rather than one attached under that name). */
 export function inFilesDatabase(node: { db: DatabaseNode }): boolean {
   return node.db.name === FILES_DATABASE && !node.db.path;
-}
-
-function samePath(a: string, b: string): boolean {
-  const norm = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
-  return norm(a) === norm(b);
 }
 
 export class SchemaTreeProvider implements vscode.TreeDataProvider<TreeNode> {

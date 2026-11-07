@@ -24,6 +24,15 @@ function dropOf(...files: string[]): vscode.DataTransfer {
 
 const token = () => new vscode.CancellationTokenSource().token;
 
+/** The same file, as the extension compares them (src/explorer/paths.ts). */
+function samePath(a: string, b: string): boolean {
+  const canonical = (file: string) => {
+    const resolved = fs.realpathSync.native(file);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return canonical(a) === canonical(b);
+}
+
 suite('DuckExplorer dropped files', () => {
   let dir: string;
   let csv: string;
@@ -119,7 +128,8 @@ suite('DuckExplorer dropped files', () => {
     });
     await api.treeDrop.handleDrop(undefined, dropOf(db), token());
     const roots: any[] = await api.tree.getChildren();
-    const node = roots.find((n) => n.kind === 'database' && n.db.path && path.resolve(n.db.path) === path.resolve(db));
+    // DuckDB reports the file's final path: on CI's Windows runners the temp folder is C:\Users\RUNNER~1\….
+    const node = roots.find((n) => n.kind === 'database' && n.db.path && samePath(n.db.path, db));
     assert.ok(node, `attached: ${roots.map((n) => n.db?.name).join(', ')}`);
     assert.strictEqual(node.db.readOnly, false);
     const [main] = await api.tree.getChildren(node);
