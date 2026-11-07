@@ -6,7 +6,9 @@ All notable changes to DuckExplorer are listed here. The format follows
 
 ## [Unreleased]
 
-Milestone 2, DuckDB UI parity (in progress).
+## [0.2.0] - 2026-11-07
+
+Milestone 2, DuckDB UI parity.
 
 ### Added
 
@@ -46,9 +48,29 @@ Milestone 2, DuckDB UI parity (in progress).
   Again**, **Open in Editor**, **Run in Notebook**, **Go to Source**, **Copy Query**, **Remove from
   History** and **Search Query History**. The history is kept per workspace; queries that create
   secrets or set credentials are never kept.
+- **Export**: the **Export** button under a result saves its rows to CSV, Parquet or Excel
+  (`.xlsx`), filtered and sorted as the grid shows them; **Export…** on a table or view in the
+  Databases view saves all of it. Excel files are written by DuckDB's `excel` extension, installed
+  the first time, and are checked against a sheet's 1,048,575-row limit before anything is written.
+- **Dropped files**: drop `.duckdb`/`.ddb`/`.db` files on the Databases view to attach them, and
+  data files (`.csv`, `.tsv`, `.parquet`, `.json`, `.jsonl`, `.ndjson`, `.xlsx`, text formats also
+  `.gz`/`.zst`) to open them as views in an in-memory `files` database and summarize them; **Open in
+  DuckExplorer** in the Explorer does the same. Opened files come back after a kernel restart.
+  Shift+drop into a SQL cell or `.sql` file writes SQL that reads the file by path.
+- **Live cell output**: printed lines, `display()`, `plt.show()` and `fig.show()` appear while a
+  cell runs, batched a few times a second; the saved notebook is as if they came at once. A cell's
+  printed text is kept up to 1,000,000 characters.
+- **Altair and Vega-Lite** output: Altair charts (including `chart.show()`) and anything that
+  displays as Vega-Lite render with Vega-Lite in the VS Code theme. Vega loads with the first chart.
+- **Chart view** ("Chart this") under every results grid: bars, lines, areas or a scatter of the
+  rows the filter keeps, opening on a chart picked from the columns. DuckDB aggregates the data, so
+  millions of rows draw a few hundred values. **New cell** keeps the chart as a Python cell (Altair,
+  else Plotly) that draws it from the cell's query.
 - Settings: `duckexplorer.sqlFiles` (default on) and `duckexplorer.historySize` (default 500,
   0 stops recording).
 - `npm run dev` builds the extension and opens an Extension Development Host on `samples/`.
+- CI on Windows and Linux (unit, kernel and VS Code integration tests), an MIT `LICENSE`, this
+  changelog, and `npm run package` to build a `.vsix`.
 
 ### Fixed
 
@@ -60,6 +82,8 @@ Milestone 2, DuckDB UI parity (in progress).
   failure.
 - A histogram-bar filter let in values outside the histogram's range once the filter it was made
   under was removed.
+- Printing in a loop slowed down with the square of the output (300,000 lines took over a minute).
+- The kernel kept running after VS Code went away while a cell was running.
 
 ## [0.1.0] - 2026-10-25
 

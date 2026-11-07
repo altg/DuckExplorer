@@ -15,6 +15,6 @@ node_modules/plotly.js-dist-min/**
 node_modules/vega*/**
 .github/**
 .claude/**
-.pytest_cache/**
+**/.pytest_cache/**
 **/*.pyc
 .gitignore

@@ -41,7 +41,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install the kernel's Python packages
-        run: python -m pip install duckdb pyarrow pandas matplotlib plotly pytest
+        run: python -m pip install duckdb pyarrow pandas matplotlib plotly altair pytest
 
       - run: npm ci
 

@@ -2,7 +2,7 @@
   "name": "duckexplorer",
   "displayName": "DuckExplorer",
   "description": "A DuckDB UI-style analysis workspace: attach DuckDB databases, browse schemas, run SQL notebooks and chart results with Python.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "your-publisher-id",
   "license": "MIT",
   "repository": {
