@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { EXTENSION_ID } from './extensionId';
 
 async function waitFor(condition: () => boolean, timeoutMs: number, what: string): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -37,7 +38,7 @@ suite('DuckExplorer query history', () => {
     uri = vscode.Uri.file(path.join(dir, 'queries.sql'));
     fs.writeFileSync(uri.fsPath, QUERIES);
     fs.writeFileSync(path.join(dir, 'picks.csv'), 'id,label\n1,one\n2,two\n3,three\n');
-    api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
     // The test instance keeps workspace state between runs.
     await api.history.clear();
   });
@@ -89,7 +90,7 @@ suite('DuckExplorer query history', () => {
     );
     await vscode.window.showNotebookDocument(notebook);
     await vscode.commands
-      .executeCommand('notebook.selectKernel', { id: 'duckexplorer-kernel', extension: 'duckexplorer.duckexplorer' })
+      .executeCommand('notebook.selectKernel', { id: 'duckexplorer-kernel', extension: EXTENSION_ID })
       .then(undefined, () => undefined);
     await vscode.commands.executeCommand('notebook.execute', notebook.uri);
     await waitFor(() => notebook.getCells().every((c) => c.executionSummary?.success !== undefined), 60_000, 'the cells to run');

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { EXTENSION_ID } from './extensionId';
 
 async function waitFor(condition: () => boolean, timeoutMs: number, what: string): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -36,7 +37,7 @@ suite('DuckExplorer .sql files', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'duckexplorer-sql-'));
     uri = vscode.Uri.file(path.join(dir, 'queries.sql'));
     fs.writeFileSync(uri.fsPath, QUERIES);
-    api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
   });
 
   suiteTeardown(async () => {

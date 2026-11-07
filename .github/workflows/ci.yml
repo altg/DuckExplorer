@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}, Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest Python the README supports on one runner, a current one on the other.
+          - os: ubuntu-latest
+            python: '3.10'
+          - os: windows-latest
+            python: '3.13'
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 22: the lockfile's @vscode/python-extension needs Node >= 22.17, and
+      # @vscode/test-electron and @vscode/vsce need Node 22.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the kernel's Python packages
+        run: python -m pip install duckdb pyarrow pandas matplotlib plotly pytest
+
+      - run: npm ci
+
+      - run: npm run compile
+
+      - run: npm run test:unit
+
+      - run: npm run test:python
+        env:
+          PYTHONIOENCODING: utf-8
+
+      # The integration tests open samples/ and attach samples/demo.duckdb.
+      - name: Build the sample database
+        run: python samples/make_sample_db.py
+
+      # npm test runs the latest stable VS Code. Key the cache on its version, and cache only the
+      # downloaded build, not the tests' user-data and extensions folders.
+      - name: Look up the current VS Code version
+        id: vscode
+        shell: bash
+        run: |
+          version=$(curl -fsSL https://update.code.visualstudio.com/api/releases/stable \
+            | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8"))[0]') || version=unknown
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: .vscode-test/vscode-*
+          key: vscode-test-${{ runner.os }}-${{ steps.vscode.outputs.version }}
+          restore-keys: vscode-test-${{ runner.os }}-
+
+      - name: VS Code integration tests
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm test
+
+      - name: VS Code integration tests
+        if: runner.os != 'Linux'
+        run: npm test

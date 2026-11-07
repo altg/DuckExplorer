@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { EXTENSION_ID } from './extensionId';
 
 async function waitFor(condition: () => boolean, timeoutMs: number, what: string): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -36,7 +37,7 @@ suite('DuckExplorer dropped files', () => {
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'not data');
     // A saved notebook in the same folder, so paths written into it are relative to it.
     fs.writeFileSync(path.join(dir, 'report.duckbook'), JSON.stringify({ version: 1, cells: [{ kind: 'code', language: 'sql', source: '' }] }));
-    api = await vscode.extensions.getExtension('duckexplorer.duckexplorer')!.activate();
+    api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
   });
 
   /** The views of opened files, as the Databases view lists them. */
