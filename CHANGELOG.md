@@ -88,6 +88,9 @@ Milestone 2, DuckDB UI parity.
   packages button now does too. DuckDB 2.0 support is planned for milestone 3.
 - Printing in a loop slowed down with the square of the output (300,000 lines took over a minute).
 - The kernel kept running after VS Code went away while a cell was running.
+- Detaching a database that was added through another name for its folder (an 8.3 short path such
+  as `C:\Users\RUNNER~1`, a junction or a symlink) left it in the saved list, so it was attached
+  again when the kernel restarted.
 
 ## [0.1.0] - 2026-10-25
 
