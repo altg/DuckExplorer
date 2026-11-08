@@ -310,6 +310,6 @@ npm run package   # duckexplorer-<version>.vsix: a minified build, the Python ke
   (with Edit as SQL and New cell), table summary on click, schema-aware SQL completions, running
   `.sql` files, query history, export (CSV/Parquet/Excel), drag-and-drop of database and data
   files, streaming cell output, Altair/Vega-Lite output, and the Chart view ("Chart this").
-- **Milestone 3 (done, not yet released):** DuckDB 2.0 support, Instant SQL-style live preview with
-  CTE inspection, a view's SQL definition from the schema tree, and text-to-SQL.
+- **Milestone 3 (done, 0.3.0):** DuckDB 2.0 support, Instant SQL-style live preview with CTE
+  inspection, a view's SQL definition from the schema tree, and text-to-SQL.
 - **Milestone 4:** S3/HTTP secrets and MotherDuck; export notebooks to HTML or `.ipynb`.
