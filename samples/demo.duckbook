@@ -70,6 +70,16 @@
    "kind": "code",
    "language": "sql",
    "source": "SELECT oi.*, p.name AS product, p.category\nFROM order_items oi\nJOIN products p USING (product_id)\nORDER BY oi.order_id, oi.line_no;"
+  },
+  {
+   "kind": "markdown",
+   "language": "markdown",
+   "source": "## Live preview and CTEs\n\nTurn on **Live Preview** (the eye button in the notebook's toolbar, or Live Preview in the status bar) and move the cursor through the query below. In one of its CTEs, **DuckDB Results** (in the panel) shows that CTE's first rows; on the final `SELECT`, the query's own. The chips above the grid switch between them. Change a filter or a column and the rows follow as you type. Only queries run, so nothing in the database changes until you run the cell."
+  },
+  {
+   "kind": "code",
+   "language": "sql",
+   "source": "WITH order_revenue AS (\n    -- One row per order that wasn't cancelled, with what it brought in.\n    SELECT o.order_id,\n           o.customer_id,\n           o.order_date,\n           round(sum(oi.quantity * oi.unit_price * (1 - oi.discount)), 2) AS revenue\n    FROM orders o\n    JOIN order_items oi USING (order_id)\n    WHERE o.status <> 'cancelled'\n    GROUP BY ALL\n),\ncustomer_revenue AS (\n    -- Each customer's orders and revenue.\n    SELECT c.customer_id,\n           c.country,\n           c.segment,\n           c.name,\n           count(*) AS orders,\n           sum(r.revenue) AS revenue\n    FROM order_revenue r\n    JOIN customers c USING (customer_id)\n    GROUP BY ALL\n),\nranked AS (\n    -- Each customer's place in their country.\n    SELECT *,\n           rank() OVER (PARTITION BY country ORDER BY revenue DESC) AS country_rank\n    FROM customer_revenue\n)\nSELECT country, country_rank, name, segment, orders, revenue\nFROM ranked\nWHERE country_rank <= 3\nORDER BY country, country_rank;"
   }
  ]
 }

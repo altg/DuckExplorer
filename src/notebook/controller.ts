@@ -6,6 +6,9 @@ import { KernelClient } from '../kernel/kernelProcess';
 import { ExecuteResult, KernelOutput, NOTEBOOK_TYPE, RENDERER_ID, TABLE_MIME, TableResult } from '../kernel/protocol';
 import { ExportChoice, Exported, exportRows, ExportSource } from './export';
 import { answerGridRequest, chartCell, ExportResult, InsertChartCell, InsertFilteredCell, isGridRequest } from './gridRequests';
+import { splitStatements } from '../sql/statements';
+import type { WriteOutcome } from '../sql/sqlWriter';
+import { Description, trailingDescription } from '../sql/textToSql';
 import { errorOutput, LiveOutputs } from './outputs';
 
 interface QueuedCell {
@@ -25,6 +28,8 @@ export class DuckbookController implements vscode.Disposable {
   private readonly queue: QueuedCell[] = [];
   private running = false;
   private executionOrder = 0;
+  /** A SQL cell of comments only describes the query to write (Write SQL): writes it into the cell. */
+  describedCell: ((cell: vscode.NotebookCell, description: Description) => Promise<WriteOutcome>) | undefined;
 
   constructor(
     private readonly kernel: KernelClient,
@@ -102,6 +107,15 @@ export class DuckbookController implements vscode.Disposable {
       return;
     }
 
+    const described = language === 'sql' && this.describedCell ? trailingDescription(cell.document.getText()) : undefined;
+    if (described?.alone && this.describedCell) {
+      await execution.replaceOutput(
+        new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(`Writing the SQL for: ${described.request}\n`)]),
+      );
+      await this.describe(cell, execution, described, this.describedCell);
+      return;
+    }
+
     const notebookUri = cell.notebook.uri;
     const params = {
       notebook: notebookUri.toString(),
@@ -142,6 +156,43 @@ export class DuckbookController implements vscode.Disposable {
       execution.end(false, Date.now());
     } finally {
       this.onDidExecute();
+    }
+  }
+
+  /**
+   * Writes the SQL a cell's comments describe. A query that ran fine as a preview then runs as the cell;
+   * otherwise the cell says why it didn't run: DuckDB's error, a statement that changes the database
+   * (left for the user to run), or why no SQL was written.
+   */
+  private async describe(
+    cell: vscode.NotebookCell,
+    execution: vscode.NotebookCellExecution,
+    described: Description,
+    write: (cell: vscode.NotebookCell, description: Description) => Promise<WriteOutcome>,
+  ): Promise<void> {
+    let outcome: WriteOutcome;
+    try {
+      outcome = await write(cell, described);
+    } catch (err) {
+      outcome = { problem: (err as Error).message, level: 'error' };
+    }
+    if ('cancelled' in outcome) {
+      await execution.clearOutput();
+      execution.end(undefined);
+    } else if ('problem' in outcome) {
+      await execution.replaceOutput(errorOutput('No SQL written', outcome.problem.replace(/^./, (c) => c.toUpperCase())));
+      execution.end(false, Date.now());
+    } else if (outcome.written.check.table) {
+      await execution.clearOutput();
+      execution.end(undefined);
+      this.enqueue([cell]);
+    } else if (outcome.written.check.error !== undefined) {
+      await execution.replaceOutput(errorOutput('DuckDB rejects the SQL written for this comment', outcome.written.check.error));
+      execution.end(false, Date.now());
+    } else {
+      const note = 'Wrote the SQL for this comment. It is not a query, so it did not run: check it, then run the cell.\n';
+      await execution.replaceOutput(new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(note)]));
+      execution.end(undefined);
     }
   }
 

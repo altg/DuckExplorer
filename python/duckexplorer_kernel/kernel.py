@@ -30,6 +30,18 @@ SUMMARY_ROWS = 1_000_000
 _NAME_DIRECTIVE = re.compile(r"\A\s*--\s*name\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*$", re.IGNORECASE | re.MULTILINE)
 _SQL_STUB = compile("rel = con.sql(query)", "<sql>", "exec")
 
+# Live previews: the first rows of a query, and how long one may take before it is stopped.
+PREVIEW_ROWS = 100
+PREVIEW_SECONDS = 5.0
+# One row more than is shown says whether there are more.
+_PREVIEW_STUB = compile(
+    "rel = con.sql(query).limit(limit + 1)\ntable = rel.to_arrow_table()\ntypes = [str(t) for t in rel.types]",
+    "<preview>",
+    "exec",
+)
+# Queries that change something as they run (a sequence, the random seed) are not previewed.
+_SIDE_EFFECTS = re.compile(r"\b(nextval|setseed)\s*\(", re.IGNORECASE)
+
 
 @dataclass
 class NotebookState:
@@ -47,6 +59,8 @@ class Kernel:
         self.max_pandas_rows = 1_000_000
         self._busy: str | None = None
         self._busy_lock = threading.Lock()
+        # Why the running preview was stopped: "timeout", or "superseded" by other work.
+        self._preview_stopped: str | None = None
         self._thread_id = threading.get_ident()
         # Sends a notification to the extension (set by the server): outputs of a running cell.
         self.notify: Callable[[str, dict], None] | None = None
@@ -109,8 +123,19 @@ class Kernel:
 
     def _sql_helper(self, query: str) -> Any:
         """sql("SELECT …") -> pandas DataFrame (None for statements without a result)."""
-        rel = self.session.con.sql(query)
+        rel = self._rows_of(self.session.con.sql(query), query)
         return None if rel is None else rel.df()
+
+    def _rows_of(self, rel: duckdb.DuckDBPyRelation | None, query: str) -> duckdb.DuckDBPyRelation | None:
+        """sql()'s relation, or None for a statement without rows of its own: duckdb 2 returns its report
+        (a Count or Success column) where 1.x returns None."""
+        if rel is None:
+            return None
+        shape = [(name, str(type_)) for name, type_ in zip(rel.columns, rel.types)]
+        # The statement is parsed again only for a result of one column, as a report is.
+        if len(shape) == 1 and script.is_report(script.statement_kind(self.session.con, query), shape):
+            return None
+        return rel
 
     # -- execution -----------------------------------------------------------------
 
@@ -167,6 +192,64 @@ class Kernel:
                 )
             return True
 
+    def stop_preview(self, reason: str) -> None:
+        """Called from other threads: stops a running preview, for other work ("superseded") or when it
+        takes too long ("timeout")."""
+        with self._busy_lock:
+            if self._busy == "preview":
+                self._preview_stopped = reason
+                self.session.con.interrupt()
+
+    def preview_sql(self, code: str, notebook: str | None = None, cwd: str | None = None, limit: int = PREVIEW_ROWS) -> dict:
+        """A live preview of a query as it is written: its first `limit` rows, as a stored result that
+        doesn't push a cell's result out (nor binds to `df`, nor goes into the history).
+
+        Only a single query (SELECT, FROM, WITH, VALUES, DESCRIBE …) is run: anything else, or a query
+        that changes something as it runs, is "skipped", as is a preview stopped for other work. One that
+        takes longer than PREVIEW_SECONDS is stopped, with an error saying so. Runs on the main thread,
+        with the notebook's DataFrames, like a SQL cell.
+        """
+        try:
+            statements = self.session.con.extract_statements(code)
+        except duckdb.Error as exc:
+            return {"error": {"ename": type(exc).__name__, "evalue": str(exc)}}
+        if len(statements) != 1 or statements[0].type.name != "SELECT":
+            return {"skipped": "not a query"}
+        if _SIDE_EFFECTS.search(code):
+            return {"skipped": "side effects"}
+        namespace = self.notebook(notebook).namespace if notebook else {"__builtins__": builtins}
+        local_vars: dict[str, Any] = {"con": self.session.con, "query": code, "limit": max(1, int(limit))}
+        self._preview_stopped = None
+        with self._running("preview", cwd):
+            timer = threading.Timer(PREVIEW_SECONDS, self.stop_preview, ("timeout",))
+            timer.daemon = True
+            started = time.perf_counter()
+            timer.start()
+            try:
+                exec(_PREVIEW_STUB, namespace, local_vars)
+                error = None
+            except (KeyboardInterrupt, duckdb.InterruptException):
+                error = {"ename": "KeyboardInterrupt", "evalue": "Execution interrupted"}
+            except Exception as exc:
+                error = {"ename": type(exc).__name__, "evalue": str(exc)}
+            finally:
+                timer.cancel()
+            elapsed = round(_ms_since(started), 1)
+        if error is not None:
+            if self._preview_stopped == "timeout":
+                return {"error": {"ename": "Timeout", "evalue": f"Stopped after {PREVIEW_SECONDS:g} s: run the query to see its rows."}}
+            if error["ename"] == "KeyboardInterrupt":
+                return {"skipped": self._preview_stopped or "interrupted"}
+            return {"error": error}
+        table: pa.Table = local_vars["table"]
+        limit = local_vars["limit"]
+        more = table.num_rows > limit
+        stored = self.results.add(table.slice(0, limit), local_vars["types"], preview=True)
+        described = self.results.describe(stored, self.page_size, elapsedMs=elapsed)
+        if more:
+            described["truncated"] = True
+        return {"table": described}
+
     def execute_sql(self, notebook: str, code: str, cwd: str | None = None, stream: Any = None) -> dict:
         state = self.notebook(notebook)
         error = None
@@ -176,7 +259,7 @@ class Kernel:
                 local_vars = {"con": self.session.con, "query": code}
                 # Run with the notebook namespace as globals so SQL can scan its DataFrames.
                 exec(_SQL_STUB, state.namespace, local_vars)
-                rel = local_vars["rel"]
+                rel = self._rows_of(local_vars["rel"], code)
                 if rel is None:
                     elapsed = _ms_since(started)
                     capture.add({"type": "text", "text": f"Statement executed in {elapsed:,.0f} ms"})
@@ -277,7 +360,7 @@ class Kernel:
         started = time.perf_counter()
         with self.session.side_lock:
             side = self.session.side
-            count = side.execute(f"SELECT count(*) FROM {qualified}").fetchone()[0]
+            [(count,)] = side.execute(f"SELECT count(*) FROM {qualified}").fetchall()
             sample = f" USING SAMPLE reservoir({SUMMARY_ROWS} ROWS) REPEATABLE (42)" if count > SUMMARY_ROWS else ""
             rel = side.sql(f"SELECT * FROM {qualified}{sample}")
             table = rel.to_arrow_table()

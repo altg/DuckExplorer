@@ -110,3 +110,17 @@ def test_a_database_attached_as_files_is_not_written_to(kernel, tmp_path, sample
     (tmp_path / "a.csv").write_text("x\n1\n")
     with pytest.raises(ValueError, match="in the way"):
         kernel.session.open_file(str(tmp_path / "a.csv"))
+
+
+def test_view_sql(kernel, sample_db):
+    alias = kernel.session.attach(str(sample_db))
+    assert kernel.session.view_sql(alias, "main", "big_orders") == (
+        "CREATE VIEW big_orders AS SELECT * FROM orders WHERE (amount > 1000);"
+    )
+    kernel.execute_sql("nb", '''CREATE VIEW memory.main."it's ""odd""" AS SELECT 42 AS answer -- a comment''')
+    assert kernel.session.view_sql("memory", "main", "it's \"odd\"") == (
+        "CREATE VIEW \"it's \"\"odd\"\"\" AS SELECT 42 AS answer;"
+    )
+    # Tables, and views that are gone, have none.
+    assert kernel.session.view_sql(alias, "main", "orders") is None
+    assert kernel.session.view_sql(alias, "staging", "big_orders") is None

@@ -132,6 +132,107 @@ suite('DuckExplorer .sql files', () => {
     await vscode.commands.executeCommand('workbench.action.files.revert');
   });
 
+  test('live preview: the query at the cursor, or the CTE it is in, as it is written', async () => {
+    const sql = [
+      'WITH evens AS (SELECT id FROM picks WHERE id % 2 = 0), big AS (SELECT id FROM evens WHERE id > 40)',
+      'SELECT count(*) AS n FROM big;',
+      "INSERT INTO picks VALUES (99, 'x');",
+      'SELECT * FROM range(1000);',
+    ].join('\n');
+    const document = await vscode.workspace.openTextDocument({ language: 'sql', content: sql });
+    const editor = await vscode.window.showTextDocument(document);
+    const at = (text: string, from = 0) => {
+      const position = document.positionAt(document.getText().indexOf(text) + from);
+      editor.selection = new vscode.Selection(position, position);
+      return editor;
+    };
+    const preview = api.livePreview;
+    await preview.toggle(true);
+    try {
+      const query = await preview.previewNow(at('count(*)'));
+      assert.deepStrictEqual([query.source.cte, query.source.ctes, query.table.rows], [undefined, ['evens', 'big'], [['4']]]);
+      assert.match(query.source.label, /^Untitled-\d+:1$/);
+      const big = await preview.previewNow(at('id > 40'));
+      assert.deepStrictEqual([big.source.cte, big.table.rows], ['big', [['42'], ['44'], ['46'], ['48']]]);
+      assert.strictEqual(api.runner.view.current, big);
+      // Only queries run.
+      const insert = await preview.previewNow(at('INSERT', 3));
+      assert.ok(insert.note && !insert.table, insert.note);
+      // The first rows of a long result.
+      const long = await preview.previewNow(at('range(1000)'));
+      assert.deepStrictEqual([long.table.rowCount, long.table.truncated], [100, true]);
+      // Moving the cursor previews where it goes, once it rests: the CTE evens.
+      at('id % 2');
+      await waitFor(() => api.runner.view.current?.source?.cte === 'evens', 10_000, 'the preview of evens');
+      assert.strictEqual(api.runner.view.current.table.rowCount, 25);
+      // A query being written: an error, with the last rows kept.
+      await editor.edit((edit) => edit.insert(document.positionAt(document.getText().indexOf('% 2')), 'nope '));
+      await waitFor(() => api.runner.view.current?.error !== undefined, 10_000, 'the preview error');
+      assert.match(api.runner.view.current.error, /nope/);
+      // Nothing was inserted.
+      const count = await api.kernel.request('runStatements', { statements: ['SELECT count(*) FROM picks'] });
+      assert.deepStrictEqual(count.table.rows, [['50']]);
+    } finally {
+      await preview.toggle(false);
+      await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+    }
+  });
+
+  test('Write SQL from a Description: a model writes the statement below the comment, and fixes what DuckDB rejects', async () => {
+    const asked: string[] = [];
+    const answers = [
+      'Here you go:\n```sql\nSELECT label, count(*) AS n FROM pick GROUP BY label\n```',
+      '```sql\nSELECT label, count(*) AS n\nFROM picks\nGROUP BY ALL\nORDER BY label;\n```',
+      'SELECT 42 AS answer',
+    ];
+    const model = {
+      id: 'test-model',
+      name: 'Test Model',
+      vendor: 'tests',
+      family: 'test',
+      sendRequest: async (messages: vscode.LanguageModelChatMessage[]) => {
+        const last = messages[messages.length - 1];
+        asked.push(last.content.map((part: any) => part.value ?? '').join(''));
+        const answer = answers[asked.length - 1];
+        return { text: (async function* () { yield answer.slice(0, 20); yield answer.slice(20); })() };
+      },
+    };
+    const models = api.sqlWriter.models;
+    api.sqlWriter.models = async () => [model];
+    const document = await vscode.workspace.openTextDocument({ language: 'sql', content: 'SELECT 1;\n-- how many picks per label\n' });
+    const editor = await vscode.window.showTextDocument(document);
+    editor.selection = new vscode.Selection(1, 5, 1, 5);
+    try {
+      const written = await vscode.commands.executeCommand<any>('duckexplorer.writeSql', 'how many picks per label');
+      assert.ok(written, 'nothing written');
+      // The prompt: the request, the schema (the temporary table, its columns), the SQL around the cursor.
+      assert.match(asked[0], /how many picks per label/);
+      assert.match(asked[0], /picks \(table\): id BIGINT, label VARCHAR/);
+      assert.ok(asked[0].includes('SELECT 1;\n-- how many picks per label<cursor>\n'), asked[0]);
+      // DuckDB rejected the first answer: asked again, with its error.
+      assert.strictEqual(written.repaired, true);
+      assert.match(asked[1], /FROM pick GROUP BY label\n```\nCatalog Error: .*pick/);
+      assert.strictEqual(
+        document.getText(),
+        'SELECT 1;\n-- how many picks per label\nSELECT label, count(*) AS n\nFROM picks\nGROUP BY ALL\nORDER BY label;\n',
+      );
+      assert.strictEqual(document.getText(written.range), 'SELECT label, count(*) AS n\nFROM picks\nGROUP BY ALL\nORDER BY label;');
+      // Its first rows, in the results view.
+      assert.deepStrictEqual(written.check.table.rows.map((row: string[]) => row[1]), ['13', '13', '12', '12']);
+      assert.strictEqual(api.runner.view.current, written.check);
+      assert.match(written.check.source.label, /^Untitled-\d+:3$/);
+      // With the cursor inside a statement, the next one goes after it, with its request as a comment.
+      editor.selection = new vscode.Selection(4, 3, 4, 3);
+      const answer = await vscode.commands.executeCommand<any>('duckexplorer.writeSql', 'the answer');
+      assert.strictEqual(answer.repaired, false);
+      assert.ok(document.getText().endsWith('ORDER BY label;\n-- the answer\nSELECT 42 AS answer;\n'), document.getText());
+      assert.deepStrictEqual(answer.check.table.rows, [['42']]);
+    } finally {
+      api.sqlWriter.models = models;
+      await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+    }
+  });
+
   test('completions in a .sql file once the kernel runs', async () => {
     const document = await vscode.workspace.openTextDocument({ language: 'sql', content: 'SELECT  FROM picks' });
     const list = await vscode.commands.executeCommand<vscode.CompletionList>(

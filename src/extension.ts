@@ -12,6 +12,7 @@ import {
   TreeNode,
 } from './explorer/schemaTree';
 import { TableSummaryPanel } from './explorer/summaryPanel';
+import { ViewSqlDocuments } from './explorer/viewSql';
 import { HistoryEntry } from './history/entries';
 import { HistoryNode, QueryHistoryView } from './history/historyView';
 import { HISTORY_SCHEME, QueryHistory } from './history/queryHistory';
@@ -24,10 +25,12 @@ import { DuckbookSerializer } from './notebook/serializer';
 import { SqlCatalog } from './sql/catalog';
 import { SqlLanguageFeatures, TRIGGER_CHARACTERS } from './sql/completion';
 import { SqlDropProvider } from './sql/drop';
+import { LivePreview } from './sql/livePreview';
 import { fileKind, READABLE } from './sql/files';
 import { quoteIdentifier } from './sql/identifiers';
 import { SqlResultsView } from './sql/resultsView';
 import { SqlFileRunner } from './sql/runner';
+import { cellTarget, SqlWriter, WriteSqlLenses } from './sql/sqlWriter';
 
 /** Returned from activate() so integration tests can reach the kernel, tree, controller, summary, catalog, runner, history and drops. */
 export interface DuckExplorerApi {
@@ -43,6 +46,8 @@ export interface DuckExplorerApi {
   treeDrop: DatabasesDropController;
   /** Files dropped into SQL cells and .sql files. */
   sqlDrop: SqlDropProvider;
+  livePreview: LivePreview;
+  sqlWriter: SqlWriter;
 }
 
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
@@ -65,8 +70,13 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   const historyView = new QueryHistoryView(history);
   const controller = new DuckbookController(kernel, history, () => refreshNames(true));
   const summary = new TableSummaryPanel(context.extensionUri, kernel);
+  const viewSql = new ViewSqlDocuments(kernel);
   const runner = new SqlFileRunner(context.extensionUri, kernel, history, () => refreshNames(true));
   const sql = new SqlLanguageFeatures(catalog);
+  const livePreview = new LivePreview(kernel, runner.view);
+  const sqlWriter = new SqlWriter(kernel, catalog, runner.view);
+  // Running a SQL cell of comments only writes the SQL they describe, then runs it.
+  controller.describedCell = (cell, { request, end }) => sqlWriter.attempt(request, cellTarget(cell, end));
   const sqlFiles: vscode.DocumentFilter[] = [
     { language: 'sql', scheme: 'file' },
     { language: 'sql', scheme: 'untitled' },
@@ -87,8 +97,10 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     kernel,
     controller,
     summary,
+    viewSql,
     catalog,
     runner,
+    livePreview,
     history,
     historyView,
     vscode.languages.registerCompletionItemProvider(sqlEditors, sql, ...TRIGGER_CHARACTERS),
@@ -195,6 +207,11 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
         });
       }
     }),
+    vscode.commands.registerCommand('duckexplorer.showViewSql', (node?: TreeNode) => {
+      if (node?.kind === 'relation' && node.relation.kind === 'view') {
+        return viewSql.show(node);
+      }
+    }),
     // Tests pass the format and file instead of choosing them.
     vscode.commands.registerCommand('duckexplorer.exportTable', (node?: TreeNode, choice?: ExportChoice) => {
       if (node?.kind === 'relation') {
@@ -223,6 +240,17 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
         return vscode.env.clipboard.writeText(name);
       }
     }),
+    vscode.commands.registerCommand('duckexplorer.toggleLivePreview', () => livePreview.toggle()),
+    // From a lens: the request, its document and where it ends. Tests pass the request instead of typing it.
+    vscode.commands.registerCommand('duckexplorer.writeSql', (request?: unknown, uri?: unknown, offset?: unknown) => {
+      const document = uri instanceof vscode.Uri ? vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString()) : undefined;
+      const at = document && typeof offset === 'number' ? document.positionAt(offset) : undefined;
+      const target = document && at ? { document, selection: new vscode.Selection(at, at) } : undefined;
+      return sqlWriter.write(typeof request === 'string' ? request : undefined, target);
+    }),
+    vscode.languages.registerCodeLensProvider(sqlEditors, new WriteSqlLenses()),
+    vscode.commands.registerCommand('duckexplorer.startLivePreview', () => livePreview.toggle(true)),
+    vscode.commands.registerCommand('duckexplorer.stopLivePreview', () => livePreview.toggle(false)),
     vscode.commands.registerCommand('duckexplorer.restartKernel', async () => {
       try {
         await kernel.restart();
@@ -244,7 +272,7 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     vscode.commands.registerCommand('duckexplorer.clearHistory', () => historyView.clear()),
     vscode.commands.registerCommand('duckexplorer.searchHistory', () => historyView.search()),
   );
-  return { kernel, tree, controller, summary, catalog, runner, history, historyView, treeDrop, sqlDrop };
+  return { kernel, tree, controller, summary, catalog, runner, history, historyView, treeDrop, sqlDrop, livePreview, sqlWriter };
 }
 
 export function deactivate(): void {

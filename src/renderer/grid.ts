@@ -45,6 +45,8 @@ export interface GridOptions {
   queryLink?: QueryLink;
   /** The Chart view's "New cell" under another name. */
   chartLink?: ChartLink;
+  /** Offer Export in the footer (default true; a live preview's first rows aren't worth saving). */
+  exportable?: boolean;
 }
 
 export class ResultGrid {
@@ -70,6 +72,7 @@ export class ResultGrid {
   private generation = 0;
   private tab: Tab = 'rows';
   private maxHeight: number;
+  private readonly exportable: boolean;
   private suppressClick = false;
   private frame = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -94,6 +97,7 @@ export class ResultGrid {
     options: GridOptions = {},
   ) {
     this.maxHeight = options.maxHeight ?? MAX_VIEWPORT_HEIGHT;
+    this.exportable = options.exportable ?? true;
     this.pages.set(0, result.rows);
     this.total = result.rowCount;
     this.expired = !client.available && result.rowCount > result.rows.length;
@@ -353,11 +357,15 @@ export class ResultGrid {
   }
 
   private renderFooter(): void {
-    const { rowCount, columns, elapsedMs, boundTo, sampledFrom } = this.result;
+    const { rowCount, columns, elapsedMs, boundTo, sampledFrom, truncated } = this.result;
     let rows = this.filter
       ? `${this.total.toLocaleString()} of ${rowCount.toLocaleString()} rows`
       : `${rowCount.toLocaleString()} ${rowCount === 1 ? 'row' : 'rows'}`;
-    if (sampledFrom !== undefined) {
+    if (truncated) {
+      rows = this.filter
+        ? `${this.total.toLocaleString()} of the first ${rowCount.toLocaleString()} rows`
+        : `First ${rowCount.toLocaleString()} rows`;
+    } else if (sampledFrom !== undefined) {
       rows = this.filter
         ? `${this.total.toLocaleString()} of ${rowCount.toLocaleString()} sampled rows`
         : `${rowCount.toLocaleString()} rows sampled from ${sampledFrom.toLocaleString()}`;
@@ -606,7 +614,7 @@ export class ResultGrid {
   }
 
   private get canExport(): boolean {
-    return this.client.available && !this.expired && this.result.columns.length > 0;
+    return this.exportable && this.client.available && !this.expired && this.result.columns.length > 0;
   }
 
   /** Cycles a column through ascending, descending and the query's own order. */

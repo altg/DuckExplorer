@@ -71,11 +71,28 @@ suite('DuckExplorer notebook', () => {
       ['sql', [TABLE_MIME]],
       ['python', [VEGALITE_MIME]],
       ['sql', [TABLE_MIME]],
+      ['sql', [TABLE_MIME]],
     ]);
 
     const big = JSON.parse(Buffer.from(codeCells[8].outputs[0].items[0].data).toString('utf8'));
     assert.strictEqual(big.rowCount, 300_107);
     assert.strictEqual(big.rows.length, big.pageSize);
+
+    // The CTE query of the live preview section: the top three customers of each country, and a CTE's rows
+    // in its live preview with the cursor in that CTE.
+    const ranked = JSON.parse(Buffer.from(codeCells[9].outputs[0].items[0].data).toString('utf8'));
+    assert.deepStrictEqual(ranked.columns.map((c: any) => c.name), ['country', 'country_rank', 'name', 'segment', 'orders', 'revenue']);
+    assert.strictEqual(ranked.rowCount, 36);
+    const cteCell = codeCells[9].document;
+    const cursor = cteCell.positionAt(cteCell.getText().indexOf('c.segment'));
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
+    const preview = await api.livePreview.previewNow({ document: cteCell, selection: new vscode.Selection(cursor, cursor) });
+    assert.deepStrictEqual(
+      [preview.source.label, preview.source.cte, preview.source.ctes],
+      [`demo.duckbook, cell ${codeCells[9].index + 1}`, 'customer_revenue', ['order_revenue', 'customer_revenue', 'ranked']],
+    );
+    assert.deepStrictEqual(preview.table.columns.map((c: any) => c.name), ['customer_id', 'country', 'segment', 'name', 'orders', 'revenue']);
+    assert.deepStrictEqual([preview.table.rowCount, preview.table.truncated], [100, true]);
 
     await notebook.save();
     const saved = JSON.parse(fs.readFileSync(uri.fsPath, 'utf8'));
@@ -104,6 +121,54 @@ suite('DuckExplorer notebook', () => {
       cell.outputs.map((o) => o.items.map((i) => [i.mime, Buffer.from(i.data).toString('utf8')])),
       [[['application/vnd.code.notebook.stdout', 'first\nsecond\n']], [['text/plain', '42']]],
     );
+  });
+
+  test('running a SQL cell of comments only writes the SQL they describe, then runs it', async () => {
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
+    const asked: string[] = [];
+    const model = {
+      id: 'test-model',
+      name: 'Test Model',
+      vendor: 'tests',
+      family: 'test',
+      sendRequest: async (messages: vscode.LanguageModelChatMessage[]) => {
+        asked.push(messages[messages.length - 1].content.map((part: any) => part.value ?? '').join(''));
+        return { text: (async function* () { yield '```sql\nSELECT 6 * 7 AS answer\n```'; })() };
+      },
+    };
+    const models = api.sqlWriter.models;
+    api.sqlWriter.models = async () => [model];
+    try {
+      const notebook = await vscode.workspace.openNotebookDocument(
+        'duckexplorer-notebook',
+        new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, '-- the answer to everything\n\n', 'sql')]),
+      );
+      await vscode.window.showNotebookDocument(notebook);
+      const cell = notebook.cellAt(0);
+      // A lens above the comment offers it too.
+      const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', cell.document.uri);
+      assert.ok(
+        lenses.some((lens) => lens.command?.command === 'duckexplorer.writeSql' && lens.command.arguments?.[0] === 'the answer to everything'),
+        JSON.stringify(lenses.map((lens) => lens.command)),
+      );
+      // Without a language model, the cell says so.
+      api.sqlWriter.models = async () => [];
+      await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+      await waitFor(() => cell.executionSummary?.success === false, 30_000, 'the cell to fail');
+      const error = JSON.parse(Buffer.from(cell.outputs[0].items[0].data).toString('utf8'));
+      assert.deepStrictEqual([error.name, /^No language model is available/.test(error.message)], ['No SQL written', true], error.message);
+      assert.strictEqual(cell.document.getText(), '-- the answer to everything\n\n');
+
+      api.sqlWriter.models = async () => [model];
+      await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+      await waitFor(() => cell.executionSummary?.success === true && cell.outputs.length > 0, 60_000, 'the written query to run');
+      assert.match(asked[0], /^Write one DuckDB .*\n\nthe answer to everything\n/);
+      assert.strictEqual(cell.document.getText(), '-- the answer to everything\nSELECT 6 * 7 AS answer;\n\n');
+      assert.deepStrictEqual(mimes(cell), [TABLE_MIME]);
+      assert.deepStrictEqual(JSON.parse(Buffer.from(cell.outputs[0].items[0].data).toString('utf8')).rows, [['42']]);
+    } finally {
+      api.sqlWriter.models = models;
+    }
   });
 
   test('a chart from the Chart view becomes a Python cell below the result', async () => {
@@ -294,6 +359,22 @@ suite('DuckExplorer notebook', () => {
       columns.map((n) => `${n.column.name} ${n.column.type}`),
       ['order_id BIGINT', 'customer_id BIGINT', 'order_date DATE', 'status VARCHAR', 'channel VARCHAR'],
     );
+
+    // Show SQL on a view: its definition, a clause per line, in a read-only SQL editor.
+    const totals = relations.find((n) => n.relation.name === 'order_totals');
+    const editor = await vscode.commands.executeCommand<vscode.TextEditor>('duckexplorer.showViewSql', totals);
+    const { document } = editor;
+    assert.strictEqual(document.languageId, 'sql');
+    assert.match(document.uri.path, /order_totals\.sql$/);
+    const lines = document.getText().split('\n');
+    assert.match(lines[0], /^-- The view .*order_totals as DuckDB keeps it/);
+    assert.strictEqual(lines[1], 'CREATE VIEW order_totals AS');
+    assert.strictEqual(lines[2], 'SELECT');
+    assert.ok(lines.includes('    count_star() AS items,'), document.getText());
+    assert.ok(lines.includes('GROUP BY ALL;'), document.getText());
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    // A table has no SQL to show.
+    assert.strictEqual(await vscode.commands.executeCommand('duckexplorer.showViewSql', orders), undefined);
   });
 
   test('SQL cells complete tables, columns, DataFrames and functions, and show parameter hints', async () => {

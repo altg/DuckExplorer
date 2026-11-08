@@ -33,7 +33,7 @@ def copy(cursor: duckdb.DuckDBPyConnection, query: str, path: str, file_format: 
     if file_format == "xlsx":
         _load_excel(cursor)
     try:
-        (count,) = cursor.execute(f"COPY ({query}) TO {quote_literal(path)} ({_OPTIONS[file_format]})").fetchone()
+        [(count,)] = cursor.execute(f"COPY ({query}) TO {quote_literal(path)} ({_OPTIONS[file_format]})").fetchall()
     except duckdb.Error as exc:
         if file_format == "xlsx" and "row limit" in str(exc):
             raise ExportFailed(_too_many_rows("there are more")) from None

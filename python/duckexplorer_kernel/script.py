@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import warnings
 
 import duckdb
 import pyarrow as pa
 
-# DuckDB ends the message of an error at a known place with an excerpt of that line and a caret.
-_EXCERPT = re.compile(r"\n+LINE (\d+): ([^\r\n]*)\n( *)\^[ \t]*\Z")
+# DuckDB ends the message of an error at a known place with an excerpt of that line and a caret
+# (duckdb 2 underlines the whole token: ^^^^).
+_EXCERPT = re.compile(r"\n+LINE (\d+): ([^\r\n]*)\n( *)\^+[ \t]*\Z")
 _NEWLINE = re.compile(r"\r\n|\r|\n")
 _ELLIPSIS = "..."
 # Statement types that return rows; others return a row count or nothing (unless RETURNING).
@@ -27,22 +29,45 @@ def run(con: duckdb.DuckDBPyConnection, statement: str, rows: bool = True) -> tu
 
     Uses execute() rather than sql(): the relation API drops the error's position for binder errors.
     """
-    parsed = con.extract_statements(statement)
-    kind = parsed[-1].type.name if parsed else ""
+    kind = statement_kind(con, statement)
     con.execute(statement)
     description = con.description
     if description is None:
         return ""
     shape = [(column[0], str(column[1])) for column in description]
-    if kind not in _QUERIES:
-        if shape == _COUNT:
-            row = con.fetchone()
-            return _changed(kind, row[0]) if row else ""
-        if shape == _SUCCESS:
-            return ""
-    if not rows:
+    if is_report(kind, shape) and shape == _COUNT:
+        counted = con.fetchall()
+        return _changed(kind, counted[0][0]) if counted else ""
+    if is_report(kind, shape) or not rows:
+        _finish(con)
         return ""
-    return con.to_arrow_table(), [type_name for _, type_name in shape]
+    with warnings.catch_warnings():
+        # duckdb 2 copies a DB-API result's rows once more to make them Arrow. What it suggests instead,
+        # con.sql(statement), would lose the position of binder errors.
+        warnings.filterwarnings("ignore", "Arrow output on a DB-API result", UserWarning)
+        return con.to_arrow_table(), [type_name for _, type_name in shape]
+
+
+def statement_kind(con: duckdb.DuckDBPyConnection, sql: str) -> str:
+    """The type of the last statement in `sql` ("SELECT", "INSERT", …), or "" when there is none."""
+    parsed = con.extract_statements(sql)
+    return parsed[-1].type.name if parsed else ""
+
+
+def is_report(kind: str, shape: list[tuple[str, str]]) -> bool:
+    """Whether a statement's result only reports what it did (how many rows it changed, or that it
+    succeeded) rather than being rows of its own, from the statement's type and the result's columns
+    as (name, type). duckdb 1.x's sql() returns None for most such statements, 2.x a relation of the report.
+    """
+    return kind not in _QUERIES and shape in (_COUNT, _SUCCESS)
+
+
+def _finish(con: duckdb.DuckDBPyConnection) -> None:
+    """Runs an unread result to its end: duckdb 2 keeps it open, which blocks the connection (1.x has
+    read it already)."""
+    complete = getattr(con, "complete", None)
+    if complete is not None:
+        complete()
 
 
 def _changed(kind: str, count: int) -> str:

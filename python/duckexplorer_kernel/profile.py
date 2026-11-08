@@ -69,7 +69,7 @@ def profile(side: duckdb.DuckDBPyConnection, scan: pa.Table, columns: list[dict]
                 # Averaged as DOUBLE: avg() of a HUGEINT or wide DECIMAL can overflow its exact sum.
                 f"avg({c}::DOUBLE)::VARCHAR" if kind == "numeric" else "NULL",
             ]
-    summary = list(rel.aggregate(", ".join(aggregates)).fetchone())
+    summary = list(rel.aggregate(", ".join(aggregates)).fetchall()[0])
 
     ranges: dict[int, _Bins] = {}
     for i, kind in enumerate(kinds):
@@ -93,7 +93,7 @@ def profile(side: duckdb.DuckDBPyConnection, scan: pa.Table, columns: list[dict]
             f"histogram({bucket_expression(i, kinds[i], columns[i]['type'], bins.low, bins.width, bins.count)})"
             for i, bins in ranges.items()
         ]
-        counts = rel.aggregate(", ".join(expressions)).fetchone()
+        counts = rel.aggregate(", ".join(expressions)).fetchall()[0]
         for (i, bins), histogram in zip(ranges.items(), counts):
             histogram = histogram or {}
             type_name = columns[i]["type"].upper()
@@ -210,10 +210,11 @@ def _label(value: float, kind: str, date_only: bool) -> str:
 
 def session_time_labels(side: duckdb.DuckDBPyConnection, values: list[float]) -> list[str]:
     """Epoch microseconds as TIMESTAMPTZ text in the session's time zone, as min and max show them."""
-    labels = side.execute(
-        "SELECT list_transform($v, x -> (make_timestamp(round(x)::BIGINT) AT TIME ZONE 'UTC')::VARCHAR)",
+    [(labels,)] = side.execute(
+        # A list comprehension: duckdb 2 refuses `x -> …` lambdas, and 1.x before 1.3 has no `lambda x: …`.
+        "SELECT [(make_timestamp(round(x)::BIGINT) AT TIME ZONE 'UTC')::VARCHAR for x in $v]",
         {"v": values},
-    ).fetchone()[0]
+    ).fetchall()
     return list(labels)
 
 

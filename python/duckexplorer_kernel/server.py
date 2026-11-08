@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 from .export import ExportFailed
 from .filters import InvalidFilter
-from .kernel import Kernel
+from .kernel import PREVIEW_ROWS, Kernel
 from .results import ResultExpired
 
 # Once the extension has gone (stdin closed), the kernel exits within this many seconds, even while a
@@ -32,6 +32,7 @@ EXIT_GRACE = 3.0
 # Served on a side thread (with the side cursor) so they don't wait for a running cell.
 _SIDE_METHODS = {
     "schema",
+    "viewSql",
     "sqlCatalog",
     "fetchPage",
     "profileResult",
@@ -58,6 +59,12 @@ class Server:
         self._write_lock = threading.Lock()
         self._queue: queue.Queue[dict | None] = queue.Queue()
         self._side = ThreadPoolExecutor(max_workers=1, thread_name_prefix="duckexplorer-side")
+        # The id of the newest previewSql request: an older one still queued is not run.
+        self._latest_preview: Any = None
+        self._current: dict | None = None
+        # Requests other than previews queued or running on the main thread: previews don't wait for them.
+        self._work = 0
+        self._work_lock = threading.Lock()
         self.kernel = Kernel()
         k = self.kernel
         k.notify = lambda method, params: self.send({"method": method, "params": params})
@@ -71,11 +78,13 @@ class Server:
             "openFile": lambda p: {"name": k.session.open_file(p["path"], p.get("name"))},
             "closeFile": lambda p: k.session.close_file(p["name"]),
             "schema": lambda p: k.session.schema(),
+            "viewSql": lambda p: {"sql": k.session.view_sql(p["database"], p["schema"], p["name"])},
             "sqlCatalog": lambda p: k.sql_catalog(p.get("notebook"), p.get("functionsVersion")),
             "summarize": lambda p: k.summarize(p["database"], p["schema"], p["name"]),
             "executeSql": lambda p: k.execute_sql(p["notebook"], p["code"], p.get("cwd"), p.get("stream")),
             "executePython": lambda p: k.execute_python(p["notebook"], p["code"], p.get("cwd"), p.get("stream")),
             "runStatements": lambda p: k.run_statements(p["statements"], p.get("cwd")),
+            "previewSql": self._preview,
             "fetchPage": lambda p: k.fetch_page(p["resultId"], p["offset"], p["limit"], p.get("sort"), p.get("filter")),
             "profileResult": lambda p: k.profile_result(p["resultId"], p.get("filter")),
             "filterSql": lambda p: k.filter_sql(p["resultId"], p.get("filter")),
@@ -86,6 +95,11 @@ class Server:
             "exportRelation": lambda p: k.export_relation(p["database"], p["schema"], p["name"], p["path"], p["format"]),
             "forgetNotebook": lambda p: k.forget_notebook(p["notebook"]),
         }
+
+    def _preview(self, params: dict) -> dict:
+        if self._current is None or self._current.get("id") != self._latest_preview:
+            return {"skipped": "superseded"}
+        return self.kernel.preview_sql(params["code"], params.get("notebook"), params.get("cwd"), params.get("limit", PREVIEW_ROWS))
 
     def send(self, message: dict) -> None:
         data = json.dumps(message, ensure_ascii=False, default=str).encode("utf-8") + b"\n"
@@ -115,7 +129,17 @@ class Server:
                 self._reply(message.get("id"), {"interrupted": self.kernel.interrupt()})
             elif method in _SIDE_METHODS:
                 self._side.submit(self._handle, message)
+            elif method == "previewSql" and self._work:
+                # A preview never waits for a cell: the extension asks again later.
+                self._reply(message.get("id"), {"skipped": "busy"})
             else:
+                if method == "previewSql":
+                    self._latest_preview = message.get("id")
+                else:
+                    with self._work_lock:
+                        self._work += 1
+                # Anything else to run, or a newer preview, goes first.
+                self.kernel.stop_preview("superseded")
                 self._queue.put(message)
         self._queue.put(None)  # stdin closed: the extension went away
         # The main loop normally ends now. But a cell may still be running, or the main thread may be
@@ -154,7 +178,14 @@ class Server:
             if message.get("method") == "shutdown":
                 self._reply(message.get("id"), {})
                 break
-            self._handle(message)
+            self._current = message
+            try:
+                self._handle(message)
+            finally:
+                self._current = None
+                if message.get("method") != "previewSql":
+                    with self._work_lock:
+                        self._work -= 1
         self._side.shutdown(wait=False)
 
 
