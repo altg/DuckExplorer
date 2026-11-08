@@ -6,7 +6,9 @@ All notable changes to DuckExplorer are listed here. The format follows
 
 ## [Unreleased]
 
-Milestone 3.
+## [0.3.0] - 2026-11-08
+
+Milestone 3: DuckDB 2.0, live preview, a view's SQL and text-to-SQL.
 
 ### Added
 
@@ -15,20 +17,21 @@ Milestone 3.
   says at startup that it needs 1.x or 2.x and offers to install it. With duckdb 2, completions show
   a table function's positional parameters by name (`read_csv(path)`), and New cell isn't available
   for a `PRAGMA`'s rows, since DuckDB 2 no longer gives the query a `PRAGMA` stands for.
-- CI runs the tests with duckdb 1.x (Linux, Python 3.10) and 2.x (Linux and Windows, Python 3.13).
+- **Live preview** (`duckexplorer.livePreview`, the eye button of `.sql` editors and of the notebook
+  toolbar, or the status bar): the query at the cursor runs as you write it, and DuckDB Results
+  shows its first 100 rows. With the cursor in a CTE, it shows that CTE's rows; chips switch between
+  the query and its CTEs. Only queries run; a preview stops after 5 seconds or when a cell runs, and
+  stays out of the query history, `df` and the kernel's recent results. The demo notebook has a
+  query of three CTEs to try it on.
 - **Show SQL** on a view in the Databases view: its definition in a read-only SQL editor, laid out a
   clause per line (DuckDB keeps it rewritten on one line, without its comments).
-- **Live preview** (`duckexplorer.livePreview`, the eye button of `.sql` editors and SQL cells, or
-  the status bar): the query at the cursor runs as you write it, and DuckDB Results shows its first
-  100 rows. With the cursor in a CTE, it shows that CTE's rows; chips switch between the query and
-  its CTEs. Only queries run; a preview stops after 5 seconds or when a cell runs, and stays out of
-  the query history, `df` and the kernel's recent results.
 - **Write SQL from a Description**: a language model that VS Code provides (such as GitHub
   Copilot's) writes DuckDB SQL for a request, from the schema and DataFrames the kernel knows and the
   SQL around the cursor. Write the request as a comment and run the cell (which then runs the query),
   or click **Write SQL** above the comment, in the notebook's toolbar or in the context menu. The
   statement runs as a live preview; when DuckDB rejects it, the model gets DuckDB's error and one
   more try. `duckexplorer.languageModel` picks the model.
+- CI runs the tests with duckdb 1.x (Linux, Python 3.10) and 2.x (Linux and Windows, Python 3.13).
 
 ### Changed
 
