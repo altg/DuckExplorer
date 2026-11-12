@@ -27,8 +27,10 @@ export interface TableResult {
   boundTo?: string[];
   /** Table summaries of large relations: the result is a random sample of this many rows. */
   sampledFrom?: number;
-  /** Live previews: the result is the query's first rows, and it has more. */
+  /** The result holds only the query's first rows: a live preview, or a result cut off at the memory limit. */
   truncated?: boolean;
+  /** A result cut off at the memory limit: that limit for one result, in MB (unset for live previews). */
+  memoryLimitMb?: number;
 }
 
 export type KernelOutput =

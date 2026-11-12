@@ -139,7 +139,11 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
     }),
     vscode.window.onDidChangeActiveColorTheme(() => kernel.reconfigure()),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('duckexplorer.pageSize') || e.affectsConfiguration('duckexplorer.maxPandasRows')) {
+      if (
+        e.affectsConfiguration('duckexplorer.pageSize') ||
+        e.affectsConfiguration('duckexplorer.maxPandasRows') ||
+        e.affectsConfiguration('duckexplorer.maxResultMemory')
+      ) {
         void kernel.reconfigure();
       }
       if (e.affectsConfiguration('duckexplorer.pythonPath') && kernel.isRunning) {
@@ -285,6 +289,7 @@ function kernelSettings(): Record<string, unknown> {
   return {
     pageSize: config.get<number>('pageSize', 200),
     maxPandasRows: config.get<number>('maxPandasRows', 1_000_000),
+    maxResultMemory: config.get<number>('maxResultMemory', 1024),
     theme: kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast ? 'dark' : 'light',
   };
 }

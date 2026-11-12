@@ -602,6 +602,12 @@
           "minimum": 0,
           "description": "Maximum rows copied into the pandas DataFrame (`df` and named results) after each SQL cell. 0 disables the DataFrame copy."
         },
+        "duckexplorer.maxResultMemory": {
+          "type": "number",
+          "default": 1024,
+          "minimum": 0,
+          "description": "Memory, in MB, for the query results the kernel keeps for the grids. One result takes at most half of it and is cut off beyond that, which the grid says; older results are dropped first. 0 removes the limit."
+        },
         "duckexplorer.sqlFiles": {
           "type": "boolean",
           "default": true,

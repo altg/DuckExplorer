@@ -357,7 +357,7 @@ export class ResultGrid {
   }
 
   private renderFooter(): void {
-    const { rowCount, columns, elapsedMs, boundTo, sampledFrom, truncated } = this.result;
+    const { rowCount, columns, elapsedMs, boundTo, sampledFrom, truncated, memoryLimitMb } = this.result;
     let rows = this.filter
       ? `${this.total.toLocaleString()} of ${rowCount.toLocaleString()} rows`
       : `${rowCount.toLocaleString()} ${rowCount === 1 ? 'row' : 'rows'}`;
@@ -426,8 +426,19 @@ export class ResultGrid {
     }
     if (boundTo?.length) {
       const bound = el('span', 'dx-bound', `Python: ${boundTo.join(', ')}`);
-      bound.title = 'Available as pandas DataFrames in Python cells of this notebook (all rows, unsorted and unfiltered)';
+      const held = truncated ? `the first ${rowCount.toLocaleString()} rows` : 'all rows';
+      bound.title = `Available as pandas DataFrames in Python cells of this notebook (${held}, unsorted and unfiltered)`;
       children.push(bound);
+    }
+    if (truncated && memoryLimitMb !== undefined) {
+      children.push(
+        el(
+          'span',
+          'dx-banner',
+          `Cut off at the ${memoryLimitMb.toLocaleString()} MB result limit (duckexplorer.maxResultMemory). ` +
+            'Sorting, filters, statistics, charts and exports use these rows only. New cell reruns the full query.',
+        ),
+      );
     }
     if (this.viewError) {
       children.push(el('span', 'dx-banner', this.viewError));

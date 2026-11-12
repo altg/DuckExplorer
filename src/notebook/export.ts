@@ -57,6 +57,8 @@ export interface ExportChoice {
 export interface Exported {
   uri: vscode.Uri;
   rowCount: number;
+  /** The result was cut off at the memory limit, so the file lacks some of the query's rows. */
+  truncated: boolean;
 }
 
 /**
@@ -76,10 +78,16 @@ export async function exportRows(kernel: KernelClient, source: ExportSource, cho
   const { format, uri } = chosen;
   const file = path.basename(uri.fsPath);
   let rowCount: number;
+  let truncated: boolean | undefined;
   try {
-    ({ rowCount } = await vscode.window.withProgress(
+    ({ rowCount, truncated } = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Exporting to ${file}…` },
-      () => kernel.request<{ rowCount: number }>(source.method, { ...source.params, path: uri.fsPath, format }),
+      () =>
+        kernel.request<{ rowCount: number; truncated?: boolean }>(source.method, {
+          ...source.params,
+          path: uri.fsPath,
+          format,
+        }),
     ));
   } catch (err) {
     if (err instanceof KernelRequestError && err.code === 'expired') {
@@ -89,7 +97,15 @@ export async function exportRows(kernel: KernelClient, source: ExportSource, cho
     return undefined;
   }
   const rows = `${rowCount.toLocaleString()} ${rowCount === 1 ? 'row' : 'rows'}`;
-  void vscode.window.showInformationMessage(`DuckExplorer: exported ${rows} to ${file}.`, 'Reveal', 'Open').then((action) => {
+  const shown = truncated
+    ? vscode.window.showWarningMessage(
+        `DuckExplorer: exported the first ${rows} to ${file}. The result was cut off at the memory limit, so the ` +
+          `file does not hold every row of the query. To export all of them, run COPY (your query) TO '${file}'.`,
+        'Reveal',
+        'Open',
+      )
+    : vscode.window.showInformationMessage(`DuckExplorer: exported ${rows} to ${file}.`, 'Reveal', 'Open');
+  void shown.then((action) => {
     if (action === 'Reveal') {
       void vscode.commands.executeCommand('revealFileInOS', uri);
     } else if (action === 'Open') {
@@ -97,7 +113,7 @@ export async function exportRows(kernel: KernelClient, source: ExportSource, cho
       void (format === 'csv' ? vscode.commands.executeCommand('vscode.open', uri) : vscode.env.openExternal(uri));
     }
   });
-  return { uri, rowCount };
+  return { uri, rowCount, truncated: truncated === true };
 }
 
 async function ask(source: ExportSource): Promise<ExportChoice | undefined> {

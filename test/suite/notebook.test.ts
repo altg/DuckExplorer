@@ -338,6 +338,38 @@ suite('DuckExplorer notebook', () => {
     );
   });
 
+  test('a result larger than the memory limit is cut off, and its export says so', async () => {
+    const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
+    const config = vscode.workspace.getConfiguration('duckexplorer');
+    await config.update('maxResultMemory', 1, vscode.ConfigurationTarget.Global);
+    try {
+      // The settings listener reconfigures the kernel too; this makes sure it has before the cell runs.
+      await api.kernel.reconfigure();
+      const notebook = await vscode.workspace.openNotebookDocument(
+        'duckexplorer-notebook',
+        new vscode.NotebookData([
+          new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT range AS n, md5(range::VARCHAR) AS h FROM range(10000000000)', 'sql'),
+        ]),
+      );
+      const editor = await vscode.window.showNotebookDocument(notebook);
+      const cell = notebook.cellAt(0);
+      await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
+      await waitFor(() => cell.executionSummary?.success !== undefined, 60_000, 'the cell to finish');
+      assert.strictEqual(cell.executionSummary?.success, true, describeFailure(cell));
+      const table = JSON.parse(Buffer.from(cell.outputs[0].items[0].data).toString('utf8'));
+      assert.deepStrictEqual([table.truncated, table.memoryLimitMb], [true, 0.5]);
+      assert.ok(table.rowCount > 0 && table.rowCount < 1_000_000, String(table.rowCount));
+
+      const csv = vscode.Uri.file(path.join(workDir, 'cut off.csv'));
+      const request = { type: 'exportResult', requestId: 0, resultId: table.id };
+      const exported = await api.controller.exportResult(editor, request, { format: 'csv', uri: csv });
+      assert.deepStrictEqual([exported.rowCount, exported.truncated], [table.rowCount, true]);
+    } finally {
+      await config.update('maxResultMemory', undefined, vscode.ConfigurationTarget.Global);
+      await api.kernel.reconfigure();
+    }
+  });
+
   test('the schema tree lists attached databases down to columns', async () => {
     const api = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
     const { alias } = await api.kernel.request('attach', { path: path.join(SAMPLES, 'demo.duckdb'), readOnly: true });
