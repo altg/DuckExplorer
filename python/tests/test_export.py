@@ -50,7 +50,7 @@ def read_back(kernel, path, file_format, columns="*", describe=False):
 def test_exports_the_rows_as_the_grid_shows_them(kernel, tmp_path, file_format):
     result_id = run(kernel, ORDERS)
     path = tmp_path / f"orders.{file_format}"
-    assert export(kernel, result_id, str(path), file_format, FILTER, SORT) == {"rowCount": len(EXPECTED_N)}
+    assert export(kernel, result_id, str(path), file_format, FILTER, SORT) == {"rowCount": len(EXPECTED_N), "truncated": False}
     rows = read_back(kernel, path, file_format, "n::BIGINT, status, day::DATE::VARCHAR, amount::DOUBLE")
     assert [row[0] for row in rows] == EXPECTED_N
     grid = kernel.fetch_page(result_id, 0, 100, SORT, FILTER)["rows"]
@@ -73,7 +73,7 @@ def test_parquet_keeps_the_types(kernel, tmp_path):
 def test_unfiltered_export_keeps_the_query_order_and_every_row(kernel, tmp_path):
     result_id = run(kernel, "SELECT range AS n FROM range(100000) ORDER BY hash(range)")
     path = tmp_path / "all.csv"
-    assert kernel.export_result(result_id, str(path), "csv") == {"rowCount": 100_000}
+    assert kernel.export_result(result_id, str(path), "csv") == {"rowCount": 100_000, "truncated": False}
     exported = [row[0] for row in read_back(kernel, path, "csv")]
     assert exported == [n for (n,) in kernel.session.con.sql("SELECT range FROM range(100000) ORDER BY hash(range)").fetchall()]
     # Sorted: ties stay in the query's order, NULLs go last, as in the grid.
@@ -113,7 +113,7 @@ def test_excel_sheets_have_a_row_limit(kernel, tmp_path):
     assert not path.exists()
     # A filter that keeps few enough rows is fine.
     small = export(kernel, result_id, str(path), "xlsx", {"conditions": [], "where": "n < 3"})
-    assert small == {"rowCount": 3}
+    assert small == {"rowCount": 3, "truncated": False}
 
 
 def test_excel_without_its_extension_says_so(tmp_path):
@@ -136,7 +136,7 @@ def test_a_sampled_summary_exports_every_row_of_its_table(kernel, tmp_path, monk
     assert (summary["rowCount"], summary["sampledFrom"]) == (100, 1000)
     spec = {"conditions": [{"column": 1, "op": "eq", "value": "c2"}], "where": "id < 500"}
     path = tmp_path / "orders.csv"
-    assert kernel.export_result(summary["id"], str(path), "csv", spec, {"column": 0, "descending": True}) == {"rowCount": 100}
+    assert kernel.export_result(summary["id"], str(path), "csv", spec, {"column": 0, "descending": True}) == {"rowCount": 100, "truncated": False}
     ids = [row[0] for row in read_back(kernel, path, "csv", "id")]
     assert ids == list(range(497, -1, -5))
 

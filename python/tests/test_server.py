@@ -61,7 +61,7 @@ def test_protocol_round_trip(tmp_path, sample_db):
         # Exports run beside cells too; a file that can't be written is the user's to fix (no traceback).
         exported = tmp_path / "n.csv"
         export = {"resultId": table["id"], "path": str(exported), "format": "csv", "filter": {"conditions": [], "where": "n > 5"}}
-        assert request(63, "exportResult", export)["result"] == {"rowCount": 1}
+        assert request(63, "exportResult", export)["result"] == {"rowCount": 1, "truncated": False}
         assert exported.read_text().splitlines() == ["n", "1000"]
         unwritable = request(64, "exportResult", {**export, "path": str(tmp_path / "missing" / "n.csv")})["error"]
         assert unwritable["code"] == "invalid" and "traceback" not in unwritable
