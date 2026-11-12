@@ -6,6 +6,20 @@ All notable changes to DuckExplorer are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Query results are cut off at a memory limit, `duckexplorer.maxResultMemory` (MB, default 1024,
+  0 = no limit). One result takes at most half of it; the grid shows a banner, `df` prints a note,
+  and an export of such a result warns that the file lacks rows. Stored results are dropped oldest
+  first when they take more than the limit together.
+
+### Fixed
+
+- A large query result could use up the kernel's memory: every result was loaded in full and the
+  newest 20 were kept whatever their size (three 10M-row results held 1,571 MB, and a large
+  `SELECT *` could stop the kernel). A query over billions of rows now returns its first rows in
+  about a second.
+
 ## [0.3.0] - 2026-11-08
 
 Milestone 3: DuckDB 2.0, live preview, a view's SQL and text-to-SQL.

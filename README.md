@@ -15,6 +15,8 @@ Python (Plotly, Altair or Matplotlib) in the same notebook.
     (hundreds of thousands of rows are fine). Click a cell, then use the arrow keys or Ctrl+C.
     Drag a header edge to resize a column. Click a header to sort by that column (ascending,
     descending, then back to the query's order); DuckDB sorts the whole result in the kernel.
+    A result larger than its share of `duckexplorer.maxResultMemory` is cut off at it, and the grid
+    says so.
   - **Filtering**: right-click a cell to keep or exclude its value (or, for numbers and dates,
     keep values ≥ or ≤ it); right-click a header for NULL filters and sorting. The **Filter**
     button under a result opens a `WHERE` box for any SQL condition on the result's columns
@@ -180,6 +182,7 @@ doesn't work, because the `code` command reads a relative path from the root of 
 | `duckexplorer.pythonPath` | empty | Interpreter for the kernel |
 | `duckexplorer.pageSize` | 200 | Rows per page in the results grid |
 | `duckexplorer.maxPandasRows` | 1,000,000 | Row cap when a SQL result is turned into a DataFrame (0 = never) |
+| `duckexplorer.maxResultMemory` | 1024 | MB for the results the kernel keeps for grids; one result takes at most half (0 = no limit) |
 | `duckexplorer.sqlFiles` | true | Run buttons, Ctrl+Enter and completions in `.sql` files |
 | `duckexplorer.historySize` | 500 | Queries kept in each workspace's Query History (0 = don't record) |
 | `duckexplorer.livePreview` | false | Run the query at the cursor as you write it and show its first rows |
@@ -205,7 +208,15 @@ Notebook renderer (webview): results grid + Plotly and Vega-Lite (loaded on dema
 - Result pages are rendered with DuckDB's own `VARCHAR` casts, so values look exactly as in the
   DuckDB CLI. Page, sort, filter, column-statistics, schema, completion and table-summary
   requests run on a second cursor, so they don't wait behind a running cell.
-- A table summary loads the relation (or a 1,000,000-row reservoir sample) as a stored result,
+- Results are read as a stream of Arrow batches. One result keeps rows until they take half of
+  `duckexplorer.maxResultMemory`; then a query stops, and any other statement (an `INSERT …
+  RETURNING`) runs to its end with the further rows dropped. The payload says `truncated`, the grid
+  shows a banner, `df` prints a note and an export warns. The store drops its oldest results until
+  the total fits the setting, never the newest; live previews don't count. A `SELECT` in a `.sql`
+  file runs through `con.sql()`, because duckdb 2's `execute()` loads the whole result first;
+  `execute()` only recovers the position of a compile-time error.
+- A table summary loads the relation (or a reservoir sample of up to 1,000,000 rows, fewer for
+  wide rows, so it fits the result limit) as a stored result,
   like a query's, so the summary panel reuses the notebook grid and Column Explorer. The panel
   is a webview that sends the grid's requests through the extension to the kernel.
 - An opened data file is `CREATE VIEW files.main.<name> AS SELECT * FROM '<absolute path>'`, in an
