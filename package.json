@@ -274,6 +274,12 @@
         "title": "Show Kernel Log",
         "category": "DuckExplorer",
         "icon": "$(output)"
+      },
+      {
+        "command": "duckexplorer.freeResultMemory",
+        "title": "Free Result Memory",
+        "category": "DuckExplorer",
+        "icon": "$(trash)"
       }
     ],
     "menus": {

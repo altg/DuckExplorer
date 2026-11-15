@@ -264,6 +264,17 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
       }
     }),
     vscode.commands.registerCommand('duckexplorer.showLog', () => log.show()),
+    vscode.commands.registerCommand('duckexplorer.freeResultMemory', async () => {
+      if (!kernel.isRunning) {
+        void vscode.window.showInformationMessage('DuckExplorer: the kernel is not running, so it holds no results.');
+        return;
+      }
+      const dropped = await kernel.clearResults();
+      const results = dropped === 1 ? '1 result' : `${dropped} results`;
+      void vscode.window.showInformationMessage(
+        `DuckExplorer: dropped ${results} kept for grids. Run a cell again to see its rows; df and named results stay in Python until rebound.`,
+      );
+    }),
     vscode.commands.registerCommand('duckexplorer.showQuery', onEntry((entry) => historyView.show(entry))),
     vscode.commands.registerCommand('duckexplorer.rerunQuery', onEntry((entry) => historyView.run(entry))),
     vscode.commands.registerCommand('duckexplorer.openQuery', onEntry((entry) => historyView.openCopy(entry))),

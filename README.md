@@ -16,7 +16,9 @@ Python (Plotly, Altair or Matplotlib) in the same notebook.
     Drag a header edge to resize a column. Click a header to sort by that column (ascending,
     descending, then back to the query's order); DuckDB sorts the whole result in the kernel.
     A result larger than its share of `duckexplorer.maxResultMemory` is cut off at it, and the grid
-    says so.
+    says so. The kernel's item in the status bar shows how much memory it uses; its tooltip splits
+    that into query results and DuckDB's buffers and has **Free result memory**, which drops the
+    kept results.
   - **Filtering**: right-click a cell to keep or exclude its value (or, for numbers and dates,
     keep values ≥ or ≤ it); right-click a header for NULL filters and sorting. The **Filter**
     button under a result opens a `WHERE` box for any SQL condition on the result's columns
@@ -211,8 +213,11 @@ Notebook renderer (webview): results grid + Plotly and Vega-Lite (loaded on dema
 - Results are read as a stream of Arrow batches. One result keeps rows until they take half of
   `duckexplorer.maxResultMemory`; then a query stops, and any other statement (an `INSERT …
   RETURNING`) runs to its end with the further rows dropped. The payload says `truncated`, the grid
-  shows a banner, `df` prints a note and an export warns. The store drops its oldest results until
-  the total fits the setting, never the newest; live previews don't count. A `SELECT` in a `.sql`
+  shows a banner, `df` prints a note and an export warns. As a new result's rows arrive, the store
+  drops its oldest results so that they and the new one fit the setting together; it never drops
+  the result just read, and live previews don't count. The limit counts Arrow bytes: the process
+  takes more (DuckDB's buffers, Python, the allocator), which the status bar shows. Memory requests
+  are answered on the kernel's reader thread, so they reply while a cell runs. A `SELECT` in a `.sql`
   file runs through `con.sql()`, because duckdb 2's `execute()` loads the whole result first;
   `execute()` only recovers the position of a compile-time error.
 - A table summary loads the relation (or a reservoir sample of up to 1,000,000 rows, fewer for

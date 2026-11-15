@@ -6,6 +6,14 @@ All notable changes to DuckExplorer are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Memory indicator**: the kernel's item in the status bar shows the memory the kernel process
+  uses, refreshed after each request and every 2 seconds while a cell runs. Its tooltip splits it
+  into the query results kept for grids (against `duckexplorer.maxResultMemory`) and DuckDB's own
+  buffers (against its `memory_limit`). **Free result memory** there, or **DuckExplorer: Free Result
+  Memory**, drops the kept results; their grids say to run the cell again.
+
 ### Changed
 
 - Query results are cut off at a memory limit, `duckexplorer.maxResultMemory` (MB, default 1024,
@@ -18,7 +26,9 @@ All notable changes to DuckExplorer are listed here. The format follows
 - A large query result could use up the kernel's memory: every result was loaded in full and the
   newest 20 were kept whatever their size (three 10M-row results held 1,571 MB, and a large
   `SELECT *` could stop the kernel). A query over billions of rows now returns its first rows in
-  about a second.
+  about a second, and older results are dropped as a new one's rows arrive, so that three 10M-row
+  cells peak at 1,450 MB of process memory (1,727 MB in 0.3.0, which kept all three and went on
+  growing with each further one).
 
 ## [0.3.0] - 2026-11-08
 

@@ -97,6 +97,17 @@ export interface KernelInfo {
   altair: string | null;
 }
 
+/** The kernel's memory, for the status bar (the `memoryInfo` request). */
+export interface MemoryInfo {
+  /** The kernel process's resident memory (working set on Windows); null where it can't be read. */
+  processBytes: number | null;
+  /** The results kept for grids, against duckexplorer.maxResultMemory (limitBytes 0: no limit). */
+  results: { bytes: number; count: number; largestBytes: number; limitBytes: number };
+  /** DuckDB's own buffers (sorts, joins, temporary tables) and its memory_limit setting, as DuckDB writes it. */
+  duckdbBytes: number | null;
+  duckdbLimit: string | null;
+}
+
 export interface ColumnNode {
   name: string;
   type: string;

@@ -364,6 +364,13 @@ suite('DuckExplorer notebook', () => {
       const request = { type: 'exportResult', requestId: 0, resultId: table.id };
       const exported = await api.controller.exportResult(editor, request, { format: 'csv', uri: csv });
       assert.deepStrictEqual([exported.rowCount, exported.truncated], [table.rowCount, true]);
+
+      // The status bar's memory figures, and Free Result Memory.
+      const before = await api.kernel.request('memoryInfo');
+      assert.ok(before.results.count >= 1 && before.results.limitBytes === 1024 ** 2, JSON.stringify(before));
+      assert.ok(before.processBytes > 0, JSON.stringify(before));
+      await vscode.commands.executeCommand('duckexplorer.freeResultMemory');
+      assert.strictEqual((await api.kernel.request('memoryInfo')).results.count, 0);
     } finally {
       await config.update('maxResultMemory', undefined, vscode.ConfigurationTarget.Global);
       await api.kernel.reconfigure();
