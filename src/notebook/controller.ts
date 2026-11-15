@@ -8,6 +8,7 @@ import { ExportChoice, Exported, exportRows, ExportSource } from './export';
 import { answerGridRequest, chartCell, ExportResult, InsertChartCell, InsertFilteredCell, isGridRequest } from './gridRequests';
 import { splitStatements } from '../sql/statements';
 import type { WriteOutcome } from '../sql/sqlWriter';
+import { DUCKDB_SQL, isSqlLanguage } from '../sql/language';
 import { Description, trailingDescription } from '../sql/textToSql';
 import { errorOutput, LiveOutputs } from './outputs';
 
@@ -38,7 +39,7 @@ export class DuckbookController implements vscode.Disposable {
   ) {
     this.controller = vscode.notebooks.createNotebookController('duckexplorer-kernel', NOTEBOOK_TYPE, 'DuckDB');
     this.controller.description = 'DuckDB + Python';
-    this.controller.supportedLanguages = ['sql', 'python'];
+    this.controller.supportedLanguages = [DUCKDB_SQL, 'python'];
     this.controller.supportsExecutionOrder = true;
     this.controller.executeHandler = (cells) => this.enqueue(cells);
     this.controller.interruptHandler = () => this.interrupt();
@@ -47,12 +48,15 @@ export class DuckbookController implements vscode.Disposable {
     this.disposables.push(
       this.controller,
       this.messaging.onDidReceiveMessage(({ editor, message }) => this.onRendererMessage(editor, message)),
+      vscode.workspace.onDidOpenNotebookDocument((doc) => duckSqlCells(doc.getCells())),
+      vscode.workspace.onDidChangeNotebookDocument((e) => duckSqlCells(e.contentChanges.flatMap((change) => change.addedCells))),
       vscode.workspace.onDidCloseNotebookDocument((doc) => {
         if (doc.notebookType === NOTEBOOK_TYPE && this.kernel.isRunning) {
           void this.kernel.request('forgetNotebook', { notebook: doc.uri.toString() }).catch(() => undefined);
         }
       }),
     );
+    vscode.workspace.notebookDocuments.forEach((doc) => duckSqlCells(doc.getCells()));
   }
 
   dispose(): void {
@@ -98,7 +102,7 @@ export class DuckbookController implements vscode.Disposable {
     execution.start(Date.now());
     await execution.clearOutput();
 
-    const language = cell.document.languageId;
+    const language = isSqlLanguage(cell.document.languageId) ? 'sql' : cell.document.languageId;
     if (language !== 'sql' && language !== 'python') {
       await execution.replaceOutput(
         errorOutput('Unsupported language', `DuckDB notebooks run SQL and Python cells, not ${language}.`),
@@ -219,7 +223,7 @@ export class DuckbookController implements vscode.Disposable {
       filter,
       sort,
     });
-    await this.insertBelow(editor, source, code, 'sql');
+    await this.insertBelow(editor, source, code, DUCKDB_SQL);
     return {};
   }
 
@@ -240,14 +244,14 @@ export class DuckbookController implements vscode.Disposable {
     if (!source) {
       throw new Error('the cell that made this result was run again or removed.');
     }
-    if (source.document.languageId !== 'sql') {
+    if (!isSqlLanguage(source.document.languageId)) {
       throw new Error(`only results of SQL cells can be ${what}.`);
     }
     return source;
   }
 
   /** Adds a cell below `source`, selects it and runs it. */
-  private async insertBelow(editor: vscode.NotebookEditor, source: vscode.NotebookCell, text: string, language: 'sql' | 'python'): Promise<void> {
+  private async insertBelow(editor: vscode.NotebookEditor, source: vscode.NotebookCell, text: string, language: string): Promise<void> {
     const index = source.index + 1;
     const edit = new vscode.WorkspaceEdit();
     edit.set(editor.notebook.uri, [
@@ -278,6 +282,18 @@ export class DuckbookController implements vscode.Disposable {
       rerun: 'Run the cell again',
     };
     return exportRows(this.kernel, source, choice);
+  }
+}
+
+/**
+ * Gives `sql` cells of DuckDB notebooks (pasted from another notebook, say) the DuckDB SQL language:
+ * VS Code runs only cells of the controller's languages, and other extensions check `sql` as their dialect.
+ */
+function duckSqlCells(cells: readonly vscode.NotebookCell[]): void {
+  for (const cell of cells) {
+    if (cell.notebook.notebookType === NOTEBOOK_TYPE && cell.kind === vscode.NotebookCellKind.Code && cell.document.languageId === 'sql') {
+      void vscode.languages.setTextDocumentLanguage(cell.document, DUCKDB_SQL).then(undefined, () => undefined);
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { TextDecoder, TextEncoder } from 'util';
+import { cellLanguage, fileLanguage } from '../sql/language';
 
 /**
  * `.duckbook` file format: JSON with cells and their outputs. Table outputs only ever hold the
@@ -41,7 +42,7 @@ export class DuckbookSerializer implements vscode.NotebookSerializer {
     }
     const cells = (file.cells ?? []).map((cell) => {
       const kind = cell.kind === 'markdown' ? vscode.NotebookCellKind.Markup : vscode.NotebookCellKind.Code;
-      const data = new vscode.NotebookCellData(kind, cell.source ?? '', cell.language ?? (kind === vscode.NotebookCellKind.Markup ? 'markdown' : 'sql'));
+      const data = new vscode.NotebookCellData(kind, cell.source ?? '', cellLanguage(cell.language, kind === vscode.NotebookCellKind.Markup));
       data.outputs = (cell.outputs ?? []).map(
         (output) =>
           new vscode.NotebookCellOutput(
@@ -67,7 +68,7 @@ export class DuckbookSerializer implements vscode.NotebookSerializer {
       cells: data.cells.map((cell) => {
         const out: DuckbookCell = {
           kind: cell.kind === vscode.NotebookCellKind.Markup ? 'markdown' : 'code',
-          language: cell.languageId,
+          language: fileLanguage(cell.languageId),
           source: cell.value,
         };
         if (cell.outputs?.length) {

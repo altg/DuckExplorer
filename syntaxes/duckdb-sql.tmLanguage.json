@@ -1,0 +1,6 @@
+{
+  "$comment": "DuckDB SQL is highlighted with VS Code's SQL grammar.",
+  "name": "DuckDB SQL",
+  "scopeName": "source.duckdb-sql",
+  "patterns": [{ "include": "source.sql" }]
+}

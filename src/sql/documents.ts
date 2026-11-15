@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { NOTEBOOK_TYPE } from '../kernel/protocol';
 import { notebookDirectory } from '../notebook/controller';
+import { DUCKDB_SQL } from './language';
 
 /** The DuckDB notebook a SQL cell belongs to; undefined for a .sql file. */
 export function notebookOf(document: vscode.TextDocument): vscode.NotebookDocument | undefined {
@@ -30,6 +31,11 @@ export function baseDirectory(document: vscode.TextDocument): string | undefined
     return notebookDirectory(notebook.uri);
   }
   return document.uri.scheme === 'file' ? path.dirname(document.uri.fsPath) : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+/** A document DuckExplorer opened (named `….sql`, so `sql` at first), as DuckDB SQL; other extensions check `sql` as their dialect. */
+export async function asDuckSql(document: vscode.TextDocument): Promise<vscode.TextDocument> {
+  return document.languageId === 'sql' ? vscode.languages.setTextDocumentLanguage(document, DUCKDB_SQL) : document;
 }
 
 /** The `duckexplorer.sqlFiles` setting: Run buttons, Ctrl+Enter and completions in .sql files. */
