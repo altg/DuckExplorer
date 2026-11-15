@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from typing import Callable
 
 import duckdb
 import pyarrow as pa
@@ -34,14 +35,21 @@ class Rows:
     truncated: bool = False
 
 
-def run(con: duckdb.DuckDBPyConnection, statement: str, rows: bool = True, max_bytes: int = 0) -> Rows | str:
+def run(
+    con: duckdb.DuckDBPyConnection,
+    statement: str,
+    rows: bool = True,
+    max_bytes: int = 0,
+    on_grow: Callable[[int], None] | None = None,
+) -> Rows | str:
     """Runs one statement. Rows come back as far as they fit in `max_bytes` (0: all of them), unless
-    `rows` is false: nobody will see them. A statement without rows comes back as a message such as
-    "3 rows inserted" (empty when there is nothing to say).
+    `rows` is false: nobody will see them; `on_grow` is told their size as they arrive (fetch.read).
+    A statement without rows comes back as a message such as "3 rows inserted" (empty when there is
+    nothing to say).
     """
     kind = statement_kind(con, statement)
     if kind == "SELECT":
-        return _query(con, statement, rows, max_bytes)
+        return _query(con, statement, rows, max_bytes, on_grow)
     # Not a query: execute(), which keeps the error's position, and the statement runs to its end.
     con.execute(statement)
     description = con.description
@@ -54,11 +62,17 @@ def run(con: duckdb.DuckDBPyConnection, statement: str, rows: bool = True, max_b
     if is_report(kind, shape) or not rows:
         _finish(con)
         return ""
-    fetched = fetch.read(fetch.arrow_reader(con), max_bytes, stop_early=False)
+    fetched = fetch.read(fetch.arrow_reader(con), max_bytes, stop_early=False, on_grow=on_grow)
     return Rows(fetched.table, [type_name for _, type_name in shape], fetched.truncated)
 
 
-def _query(con: duckdb.DuckDBPyConnection, statement: str, rows: bool, max_bytes: int) -> Rows | str:
+def _query(
+    con: duckdb.DuckDBPyConnection,
+    statement: str,
+    rows: bool,
+    max_bytes: int,
+    on_grow: Callable[[int], None] | None,
+) -> Rows | str:
     """A SELECT runs through sql(), whose reader can stop it at the limit: duckdb 2's execute() loads
     the whole result before anything can read it."""
     try:
@@ -77,7 +91,7 @@ def _query(con: duckdb.DuckDBPyConnection, statement: str, rows: bool, max_bytes
     if not rows:
         fetch.first_batch(reader)  # as far as duckdb 1.x's execute() ran an unread result
         return ""
-    fetched = fetch.read(reader, max_bytes, stop_early=True)
+    fetched = fetch.read(reader, max_bytes, stop_early=True, on_grow=on_grow)
     return Rows(fetched.table, types, fetched.truncated)
 
 

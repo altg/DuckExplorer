@@ -279,7 +279,12 @@ class Kernel:
                     # A query can stop once it has filled its share of memory; any other statement runs
                     # to its end (an INSERT ... RETURNING inserts every row), keeping only that share.
                     kind = script.statement_kind(self.session.con, code)
-                    fetched = fetch.read(fetch.arrow_reader(rel), self.max_result_bytes, stop_early=kind == "SELECT")
+                    fetched = fetch.read(
+                        fetch.arrow_reader(rel),
+                        self.max_result_bytes,
+                        stop_early=kind == "SELECT",
+                        on_grow=self.results.make_room,
+                    )
                     elapsed = _ms_since(started)
                     stored = self.results.add(fetched.table, types, truncated=fetched.truncated)
                     bound = self._bind_result(state, code, stored)
@@ -333,7 +338,11 @@ class Kernel:
             for index, statement in enumerate(statements):
                 try:
                     outcome = script.run(
-                        self.session.con, statement, rows=index == len(statements) - 1, max_bytes=self.max_result_bytes
+                        self.session.con,
+                        statement,
+                        rows=index == len(statements) - 1,
+                        max_bytes=self.max_result_bytes,
+                        on_grow=self.results.make_room,
                     )
                 except (KeyboardInterrupt, duckdb.InterruptException):
                     interrupted = _interrupted()
@@ -388,7 +397,9 @@ class Kernel:
             rel = side.sql(f"SELECT * FROM {qualified}{sample}")
             types = [str(t) for t in rel.types]
             # Rows wider than the probe's could still pass the limit.
-            fetched = fetch.read(fetch.arrow_reader(rel), self.max_result_bytes, stop_early=True)
+            fetched = fetch.read(
+                fetch.arrow_reader(rel), self.max_result_bytes, stop_early=True, on_grow=self.results.make_room
+            )
         stored = self.results.add(fetched.table, types, truncated=fetched.truncated)
         extra: dict[str, Any] = {"elapsedMs": round(_ms_since(started), 1)}
         if sample:
@@ -502,21 +513,22 @@ class Kernel:
     def _table_output(self, obj: Any) -> dict | None:
         """Table output for DataFrame-like values displayed from Python cells, else None."""
         types = [str(t) for t in obj.types] if isinstance(obj, duckdb.DuckDBPyRelation) else None
-        fetched = _as_arrow(obj, self.max_result_bytes)
+        fetched = _as_arrow(obj, self.max_result_bytes, self.results.make_room)
         if fetched is None:
             return None
         stored = self.results.add(fetched.table, types, truncated=fetched.truncated)
         return {"type": "table", "table": self.results.describe(stored, self.page_size)}
 
 
-def _as_arrow(obj: Any, max_bytes: int) -> fetch.Fetched | None:
-    """A displayed value's rows as Arrow, as many as fit in `max_bytes` (0: all of them)."""
+def _as_arrow(obj: Any, max_bytes: int, make_room: Callable[[int], None]) -> fetch.Fetched | None:
+    """A displayed value's rows as Arrow, as many as fit in `max_bytes` (0: all of them). `make_room`
+    is told the size of rows about to be made, so that older results can go first."""
     if isinstance(obj, pa.Table):
         return fetch.cap_table(obj, max_bytes)
     if isinstance(obj, pa.RecordBatch):
         return fetch.cap_table(pa.Table.from_batches([obj]), max_bytes)
     if isinstance(obj, duckdb.DuckDBPyRelation):
-        return fetch.read(fetch.arrow_reader(obj), max_bytes, stop_early=True)
+        return fetch.read(fetch.arrow_reader(obj), max_bytes, stop_early=True, on_grow=make_room)
     pd = sys.modules.get("pandas")
     if pd is not None:
         if isinstance(obj, pd.Series):
@@ -531,6 +543,7 @@ def _as_arrow(obj: Any, max_bytes: int) -> fetch.Fetched | None:
                 if limit_rows < len(obj):
                     obj = obj.iloc[:limit_rows]
                     truncated = True
+                make_room(len(obj) * row_bytes)
             capped = fetch.cap_table(_frame_to_arrow(obj, pd), max_bytes)
             return fetch.Fetched(capped.table, truncated or capped.truncated)
     if hasattr(obj, "__arrow_c_stream__") and not isinstance(obj, type):

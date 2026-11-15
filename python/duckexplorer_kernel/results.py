@@ -94,6 +94,34 @@ class ResultStore:
                 held -= evicted.nbytes
         return stored
 
+    def make_room(self, incoming: int) -> None:
+        """Drops the oldest results until those kept and a result being read (`incoming` bytes so far)
+        fit the limit together. Called as the rows arrive, so that the kernel never holds the old
+        results and a new one at once; add() alone would only evict once the new one was read."""
+        if self.max_bytes <= 0:
+            return
+        with self._lock:
+            results = self._results
+            held = sum(result.nbytes for result in results.values())
+            while results and held + incoming > self.max_bytes:
+                _, evicted = results.popitem(last=False)
+                held -= evicted.nbytes
+
+    def memory(self) -> dict:
+        """What the kept results take, for the memory indicator (live previews are left out: 101 rows each)."""
+        with self._lock:
+            sizes = [result.nbytes for result in self._results.values()]
+        return {"bytes": sum(sizes), "count": len(sizes), "largestBytes": max(sizes, default=0), "limitBytes": self.max_bytes}
+
+    def clear(self) -> int:
+        """Drops every kept result (live previews too); their grids then say to run the cell again.
+        Returns how many were dropped."""
+        with self._lock:
+            dropped = len(self._results) + len(self._previews)
+            self._results.clear()
+            self._previews.clear()
+        return dropped
+
     def get(self, result_id: str) -> StoredResult:
         with self._lock:
             stored = self._results.get(result_id) or self._previews.get(result_id)

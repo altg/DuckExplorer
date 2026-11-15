@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import duckdb
 import pyarrow as pa
@@ -40,11 +40,17 @@ def arrow_reader(source: Any, batch_rows: int = BATCH_ROWS) -> pa.RecordBatchRea
     raise RuntimeError("This duckdb has no Arrow reader")
 
 
-def read(reader: pa.RecordBatchReader, max_bytes: int, stop_early: bool) -> Fetched:
+def read(
+    reader: pa.RecordBatchReader,
+    max_bytes: int,
+    stop_early: bool,
+    on_grow: Callable[[int], None] | None = None,
+) -> Fetched:
     """Reads a result, keeping rows until they take `max_bytes` (0: all of them).
 
     With `stop_early` the statement is abandoned once the limit is reached; without it the reader is
-    read to its end and the further rows are dropped, so the statement completes.
+    read to its end and the further rows are dropped, so the statement completes. `on_grow` is told
+    the bytes kept so far after each batch (the result store makes room for them).
     Always closes the reader: duckdb 2 refuses the next statement on a connection with an open result.
     """
     schema = reader.schema
@@ -65,6 +71,8 @@ def read(reader: pa.RecordBatchReader, max_bytes: int, stop_early: bool) -> Fetc
                 batches.append(batch)
                 size += batch.nbytes
                 full = max_bytes > 0 and size >= max_bytes
+                if on_grow is not None:
+                    on_grow(size)
     except (OSError, pa.ArrowException) as exc:
         raise as_duckdb_error(exc) from None
     finally:

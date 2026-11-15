@@ -147,6 +147,54 @@ def test_the_newest_result_is_never_evicted(small):
     assert small.results.get(stored.id) is stored
 
 
+def test_old_results_go_while_a_new_one_is_read(small, monkeypatch):
+    # Two results of about 37% each, then one cut off at half the limit: the store makes room as its
+    # rows arrive, so kept results and the new one never pass the limit together.
+    for _ in range(2):
+        only_table(small.execute_sql("nb", WIDE.format(n=30_000)))
+    store = small.results
+    make_room = store.make_room
+    peaks = []
+
+    def watching(incoming):
+        make_room(incoming)
+        peaks.append(store.memory()["bytes"] + incoming)
+
+    monkeypatch.setattr(store, "make_room", watching)
+    table = only_table(small.execute_sql("nb", WIDE.format(n=HUGE)))
+    assert table["truncated"] is True
+    assert len(peaks) > 1
+    assert max(peaks) <= store.max_bytes
+    # The same for .sql statements, table summaries and relations shown from Python.
+    peaks.clear()
+    small.run_statements([WIDE.format(n=HUGE)])
+    small.execute_sql("nb", "CREATE TABLE wide AS SELECT range AS id, repeat('x', 500) AS pad FROM range(200000)")
+    small.summarize("memory", "main", "wide")
+    small.execute_python("nb", f"con.sql('{WIDE.format(n=HUGE)}')")
+    assert len(peaks) > 3
+    assert max(peaks) <= store.max_bytes
+
+
+def test_make_room_memory_and_clear(kernel):
+    store = kernel.results
+    store.max_bytes = 3_000_000
+    tables = [pa.table({"n": pa.array(range(125_000), pa.int64())}) for _ in range(3)]  # 1 MB each
+    first, second, third = (store.add(t) for t in tables)
+    assert store.memory() == {"bytes": 3_000_000, "count": 3, "largestBytes": 1_000_000, "limitBytes": 3_000_000}
+    store.make_room(1_500_000)  # the two oldest go
+    assert store.memory()["count"] == 1
+    assert store.get(third.id) is third
+    store.make_room(5_000_000)  # more than the limit on its own: everything goes
+    assert store.memory()["bytes"] == 0
+    store.max_bytes = 0
+    store.add(tables[0])
+    store.make_room(10**12)  # no limit
+    assert store.memory()["count"] == 1
+    assert store.clear() == 1
+    with pytest.raises(ResultExpired):
+        store.get(first.id)
+
+
 def test_live_previews_do_not_count(small):
     table = only_table(small.execute_sql("nb", WIDE.format(n=30_000)))
     for n in range(10):
