@@ -8,6 +8,7 @@ import { ExportChoice, Exported, exportRows, ExportSource } from '../notebook/ex
 import { chartCell, ExportResult, InsertChartCell, InsertFilteredCell } from '../notebook/gridRequests';
 import { runInNotebook } from '../notebook/insert';
 import { baseDirectory, setBaseDirectory, sqlFilesEnabled } from './documents';
+import { DUCKDB_SQL } from './language';
 import { SqlResultsView } from './resultsView';
 import { splitStatements, Statement, statementAt } from './statements';
 
@@ -210,7 +211,7 @@ export class SqlFileRunner implements vscode.CodeLensProvider, vscode.Disposable
     const document = await vscode.workspace.openTextDocument(run.document.uri);
     if (document.uri.scheme === HISTORY_SCHEME) {
       // The history's documents are read-only: the query goes into a new editor.
-      const copy = await vscode.workspace.openTextDocument({ language: 'sql', content: `${code};\n` });
+      const copy = await vscode.workspace.openTextDocument({ language: DUCKDB_SQL, content: `${code};\n` });
       setBaseDirectory(copy.uri, baseDirectory(document));
       await vscode.window.showTextDocument(copy, { viewColumn: this.columnOf(document), preview: false });
       void this.run(copy, splitStatements(copy.getText()));

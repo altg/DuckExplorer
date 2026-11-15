@@ -28,6 +28,7 @@ import { SqlDropProvider } from './sql/drop';
 import { LivePreview } from './sql/livePreview';
 import { fileKind, READABLE } from './sql/files';
 import { quoteIdentifier } from './sql/identifiers';
+import { DUCKDB_SQL, SQL_LANGUAGES } from './sql/language';
 import { SqlResultsView } from './sql/resultsView';
 import { SqlFileRunner } from './sql/runner';
 import { cellTarget, SqlWriter, WriteSqlLenses } from './sql/sqlWriter';
@@ -77,17 +78,16 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   const sqlWriter = new SqlWriter(kernel, catalog, runner.view);
   // Running a SQL cell of comments only writes the SQL they describe, then runs it.
   controller.describedCell = (cell, { request, end }) => sqlWriter.attempt(request, cellTarget(cell, end));
-  const sqlFiles: vscode.DocumentFilter[] = [
-    { language: 'sql', scheme: 'file' },
-    { language: 'sql', scheme: 'untitled' },
-    { language: 'sql', scheme: HISTORY_SCHEME },
-  ];
+  // .sql files are `sql` (or DuckDB SQL by `files.associations`); the editors DuckExplorer opens are DuckDB SQL.
+  const sqlFiles: vscode.DocumentFilter[] = SQL_LANGUAGES.flatMap((language) =>
+    ['file', 'untitled', HISTORY_SCHEME].map((scheme) => ({ language, scheme })),
+  );
   // History commands act on the entry they're given (from the view), else the view's selection.
   const onEntry = (action: (entry: HistoryEntry) => unknown) => (node?: HistoryNode) => {
     const [entry] = historyView.entriesOf(node);
     return entry && action(entry);
   };
-  const sqlEditors: vscode.DocumentSelector = [{ notebookType: NOTEBOOK_TYPE, language: 'sql' }, ...sqlFiles];
+  const sqlEditors: vscode.DocumentSelector = [{ notebookType: NOTEBOOK_TYPE, language: DUCKDB_SQL }, ...sqlFiles];
   const open = (files: vscode.Uri[]) => openFiles(files, kernel, attached, opened, summary, refreshNames);
   const treeDrop = new DatabasesDropController(open);
   const sqlDrop = new SqlDropProvider();

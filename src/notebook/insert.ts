@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { NOTEBOOK_TYPE } from '../kernel/protocol';
+import { DUCKDB_SQL } from '../sql/language';
 
-export async function openNotebookWith(source: string, language: 'sql' | 'python' = 'sql'): Promise<vscode.NotebookEditor> {
+export async function openNotebookWith(source: string, language: string = DUCKDB_SQL): Promise<vscode.NotebookEditor> {
   const cell = new vscode.NotebookCellData(vscode.NotebookCellKind.Code, source, language);
   const document = await vscode.workspace.openNotebookDocument(NOTEBOOK_TYPE, new vscode.NotebookData([cell]));
   // The first column: the summary panel opens beside it, and must not be covered by the notebook.
@@ -12,7 +13,7 @@ export async function openNotebookWith(source: string, language: 'sql' | 'python
  * Adds a SQL (or Python) cell to a DuckDB notebook and runs it: the active notebook, else one that is
  * visible (beside the summary panel, say), else a new one.
  */
-export async function runInNotebook(source: string, language: 'sql' | 'python' = 'sql'): Promise<void> {
+export async function runInNotebook(source: string, language: string = DUCKDB_SQL): Promise<void> {
   const isDuckbook = (editor: vscode.NotebookEditor | undefined) => editor?.notebook.notebookType === NOTEBOOK_TYPE;
   const active = vscode.window.activeNotebookEditor;
   let editor = isDuckbook(active) ? active : vscode.window.visibleNotebookEditors.find(isDuckbook);

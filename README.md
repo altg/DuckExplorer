@@ -107,6 +107,15 @@ Python (Plotly, Altair or Matplotlib) in the same notebook.
   with notebooks, so a temporary table made in one is visible in the other, and relative paths
   resolve against the file's folder. Completions work as in notebook cells once the kernel is
   running (a `.sql` file alone doesn't start it). Turn all of this off with `duckexplorer.sqlFiles`.
+- **DuckDB SQL language**: notebook SQL cells, and the editors DuckExplorer opens (a history entry,
+  a view's SQL, a query copied to change), are **DuckDB SQL** (`duckdb-sql`), highlighted like SQL,
+  rather than VS Code's generic SQL (`sql`), which other extensions check as their own dialect: the
+  SQL Server extension (`ms-mssql.mssql`) reports valid DuckDB such as `LIMIT 100` as
+  `Incorrect syntax near '100'`. Notebooks still keep their SQL cells as `sql` in the `.duckbook`
+  file, so older versions open them. `.sql` files stay `sql`, for the other tools you use on them;
+  if the SQL Server extension's errors get in the way there, either turn its checking off for the
+  workspace, `"mssql.intelliSense.enableErrorChecking": false`, or make `.sql` files DuckDB SQL,
+  `"files.associations": { "*.sql": "duckdb-sql" }`, which DuckExplorer runs and completes the same.
 - **Live preview**, like DuckDB's Instant SQL: turn it on with the eye button in a `.sql` editor's
   title bar or the notebook's toolbar, the **Live Preview** item in the status bar, or
   `duckexplorer.livePreview`. Then the query at the cursor runs as you write it (once typing pauses),

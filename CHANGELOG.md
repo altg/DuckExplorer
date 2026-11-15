@@ -16,6 +16,15 @@ All notable changes to DuckExplorer are listed here. The format follows
 
 ### Changed
 
+- **DuckDB SQL language**: notebook SQL cells are now DuckDB SQL (`duckdb-sql`, highlighted with
+  VS Code's SQL grammar) rather than VS Code's `sql`, so the SQL Server extension no longer reports
+  valid DuckDB (`SELECT … LIMIT 100`) as T-SQL errors in the Problems view. The editors DuckExplorer
+  opens (a history entry, a view's SQL, a query copied to change) are DuckDB SQL too. `.duckbook`
+  files keep SQL cells as `sql`, so notebooks saved before (or by 0.3.0) open unchanged and open in
+  0.3.0 still; a `sql` cell pasted into a DuckDB notebook becomes DuckDB SQL. `.sql` files stay
+  `sql`: the README says how to stop the SQL Server extension's checks on them
+  (`mssql.intelliSense.enableErrorChecking`), or to make them DuckDB SQL with `files.associations`,
+  which DuckExplorer now runs and completes as it does `.sql` files.
 - Query results are cut off at a memory limit, `duckexplorer.maxResultMemory` (MB, default 1024,
   0 = no limit). One result takes at most half of it; the grid shows a banner, `df` prints a note,
   and an export of such a result warns that the file lacks rows. Stored results are dropped oldest

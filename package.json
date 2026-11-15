@@ -38,9 +38,26 @@
     "onNotebook:duckexplorer-notebook",
     "onView:duckexplorer.schema",
     "onView:duckexplorer.history",
-    "onLanguage:sql"
+    "onLanguage:sql",
+    "onLanguage:duckdb-sql"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "duckdb-sql",
+        "aliases": [
+          "DuckDB SQL"
+        ],
+        "configuration": "./syntaxes/duckdb-sql.language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "duckdb-sql",
+        "scopeName": "source.duckdb-sql",
+        "path": "./syntaxes/duckdb-sql.tmLanguage.json"
+      }
+    ],
     "notebooks": [
       {
         "type": "duckexplorer-notebook",
@@ -475,11 +492,11 @@
         },
         {
           "command": "duckexplorer.runStatement",
-          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+          "when": "editorLangId =~ /^(duckdb-)?sql$/ && !notebookEditorFocused && config.duckexplorer.sqlFiles"
         },
         {
           "command": "duckexplorer.runFile",
-          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+          "when": "editorLangId =~ /^(duckdb-)?sql$/ && !notebookEditorFocused && config.duckexplorer.sqlFiles"
         },
         {
           "command": "duckexplorer.startLivePreview",
@@ -493,12 +510,12 @@
       "editor/title": [
         {
           "command": "duckexplorer.startLivePreview",
-          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles && !config.duckexplorer.livePreview",
+          "when": "resourceLangId =~ /^(duckdb-)?sql$/ && config.duckexplorer.sqlFiles && !config.duckexplorer.livePreview",
           "group": "navigation@1"
         },
         {
           "command": "duckexplorer.stopLivePreview",
-          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles && config.duckexplorer.livePreview",
+          "when": "resourceLangId =~ /^(duckdb-)?sql$/ && config.duckexplorer.sqlFiles && config.duckexplorer.livePreview",
           "group": "navigation@1"
         }
       ],
@@ -522,36 +539,36 @@
       "editor/title/run": [
         {
           "command": "duckexplorer.runFile",
-          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles",
+          "when": "resourceLangId =~ /^(duckdb-)?sql$/ && config.duckexplorer.sqlFiles",
           "group": "navigation@1"
         },
         {
           "command": "duckexplorer.runStatement",
-          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles",
+          "when": "resourceLangId =~ /^(duckdb-)?sql$/ && config.duckexplorer.sqlFiles",
           "group": "navigation@2"
         }
       ],
       "editor/context": [
         {
           "command": "duckexplorer.writeSql",
-          "when": "editorLangId == sql && (notebookEditorFocused || config.duckexplorer.sqlFiles)",
+          "when": "editorLangId =~ /^(duckdb-)?sql$/ && (notebookEditorFocused || config.duckexplorer.sqlFiles)",
           "group": "duckexplorer@0"
         },
         {
           "command": "duckexplorer.runStatement",
-          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles",
+          "when": "editorLangId =~ /^(duckdb-)?sql$/ && !notebookEditorFocused && config.duckexplorer.sqlFiles",
           "group": "duckexplorer@1"
         },
         {
           "command": "duckexplorer.runFile",
-          "when": "editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles",
+          "when": "editorLangId =~ /^(duckdb-)?sql$/ && !notebookEditorFocused && config.duckexplorer.sqlFiles",
           "group": "duckexplorer@2"
         }
       ],
       "explorer/context": [
         {
           "command": "duckexplorer.runFile",
-          "when": "resourceLangId == sql && config.duckexplorer.sqlFiles",
+          "when": "resourceLangId =~ /^(duckdb-)?sql$/ && config.duckexplorer.sqlFiles",
           "group": "duckexplorer@1"
         },
         {
@@ -566,13 +583,13 @@
         "command": "duckexplorer.runStatement",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "editorTextFocus && editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+        "when": "editorTextFocus && editorLangId =~ /^(duckdb-)?sql$/ && !notebookEditorFocused && config.duckexplorer.sqlFiles"
       },
       {
         "command": "duckexplorer.runFile",
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
-        "when": "editorTextFocus && editorLangId == sql && !notebookEditorFocused && config.duckexplorer.sqlFiles"
+        "when": "editorTextFocus && editorLangId =~ /^(duckdb-)?sql$/ && !notebookEditorFocused && config.duckexplorer.sqlFiles"
       },
       {
         "command": "duckexplorer.removeQuery",
