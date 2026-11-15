@@ -83,9 +83,9 @@ suite('DuckExplorer query history', () => {
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
       new vscode.NotebookData([
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 42 AS answer', 'sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 42 AS answer', 'duckdb-sql'),
         new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'x = 1', 'python'),
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT * FROM nowhere', 'sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT * FROM nowhere', 'duckdb-sql'),
       ]),
     );
     await vscode.window.showNotebookDocument(notebook);
@@ -125,7 +125,7 @@ suite('DuckExplorer query history', () => {
 
     const editor = await api.historyView.show(csv);
     assert.strictEqual(editor.document.uri.scheme, 'duckexplorer-history');
-    assert.strictEqual(editor.document.languageId, 'sql');
+    assert.strictEqual(editor.document.languageId, 'duckdb-sql');
     assert.strictEqual(editor.document.getText(), csv.sql);
     assert.match(path.basename(editor.document.uri.path), /^History \d\d:\d\d:\d\d\.sql$/);
 
@@ -142,7 +142,7 @@ suite('DuckExplorer query history', () => {
     await waitFor(() => api.runner.view.current?.result?.table?.id !== again.table.id && api.runner.view.current?.type === 'result', 30_000, 'the new query to run');
     assert.strictEqual(api.runner.view.current.result.table.rowCount, 2);
     const copy = vscode.window.activeTextEditor!.document;
-    assert.strictEqual(copy.uri.scheme, 'untitled');
+    assert.deepStrictEqual([copy.uri.scheme, copy.languageId], ['untitled', 'duckdb-sql']);
     assert.match(copy.getText(), /^SELECT \*\nFROM \(\nSELECT \* FROM read_csv\('picks.csv'\) ORDER BY id\n\)\nWHERE label IS DISTINCT FROM 'two';\n$/);
     await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   });
@@ -150,6 +150,7 @@ suite('DuckExplorer query history', () => {
   test("a copy's folder goes when it closes, so the next editor with its name runs in the workspace folder", async () => {
     const csv = api.history.all.find((entry: any) => entry.sql.startsWith('SELECT * FROM read_csv'));
     const copy = await api.historyView.openCopy(csv);
+    assert.strictEqual(copy.document.languageId, 'duckdb-sql');
     const name = copy.document.uri.toString();
     const ran = await vscode.commands.executeCommand<any>('duckexplorer.runFile', copy.document.uri);
     assert.strictEqual(ran.table.rowCount, 3);

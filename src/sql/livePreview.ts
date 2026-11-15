@@ -5,6 +5,7 @@ import { KernelClient } from '../kernel/kernelProcess';
 import { NOTEBOOK_TYPE, PreviewMessage, PreviewReply, PreviewSource } from '../kernel/protocol';
 import { previewTarget, withClause } from './ctes';
 import { baseDirectory, notebookOf, sqlFilesEnabled } from './documents';
+import { isSqlLanguage } from './language';
 import { SqlResultsView } from './resultsView';
 import { splitStatements, statementAt } from './statements';
 
@@ -212,7 +213,7 @@ export class LivePreview implements vscode.Disposable {
 
 /** SQL cells of DuckDB notebooks, and SQL files where DuckExplorer runs them (`duckexplorer.sqlFiles`). */
 export function isDuckSql(document: vscode.TextDocument): boolean {
-  if (document.languageId !== 'sql') {
+  if (!isSqlLanguage(document.languageId)) {
     return false;
   }
   if (FILE_SCHEMES.has(document.uri.scheme)) {

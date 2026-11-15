@@ -3,6 +3,7 @@ import { KernelClient } from '../kernel/kernelProcess';
 import { NOTEBOOK_TYPE, PreviewMessage, PreviewReply, SchemaTree } from '../kernel/protocol';
 import { SqlCatalog } from './catalog';
 import { baseDirectory, notebookOf } from './documents';
+import { DUCKDB_SQL, isSqlLanguage } from './language';
 import { isDuckSql, labelOf, PREVIEW_ROWS } from './livePreview';
 import { SqlResultsView } from './resultsView';
 import { splitStatements, statementAt } from './statements';
@@ -234,12 +235,12 @@ async function activeTarget(): Promise<WriteTarget | undefined> {
   }
   const index = notebook.selection.isEmpty ? notebook.notebook.cellCount : notebook.selection.end - 1;
   const cell = index < notebook.notebook.cellCount ? notebook.notebook.cellAt(index) : undefined;
-  if (cell?.kind === vscode.NotebookCellKind.Code && cell.document.languageId === 'sql') {
+  if (cell?.kind === vscode.NotebookCellKind.Code && isSqlLanguage(cell.document.languageId)) {
     return cellTarget(cell);
   }
   const at = cell ? cell.index + 1 : notebook.notebook.cellCount;
   const edit = new vscode.WorkspaceEdit();
-  edit.set(notebook.notebook.uri, [vscode.NotebookEdit.insertCells(at, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, '', 'sql')])]);
+  edit.set(notebook.notebook.uri, [vscode.NotebookEdit.insertCells(at, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, '', DUCKDB_SQL)])]);
   if (!(await vscode.workspace.applyEdit(edit))) {
     return undefined;
   }

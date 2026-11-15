@@ -62,16 +62,16 @@ suite('DuckExplorer notebook', () => {
     }
     const byLanguage = codeCells.map((c) => [c.document.languageId, mimes(c)] as const);
     assert.deepStrictEqual(byLanguage, [
-      ['sql', ['text/plain']],
-      ['sql', [TABLE_MIME]],
+      ['duckdb-sql', ['text/plain']],
+      ['duckdb-sql', [TABLE_MIME]],
       ['python', [PLOTLY_MIME]],
-      ['sql', [TABLE_MIME]],
+      ['duckdb-sql', [TABLE_MIME]],
       ['python', ['image/png']],
       ['python', [TABLE_MIME]],
-      ['sql', [TABLE_MIME]],
+      ['duckdb-sql', [TABLE_MIME]],
       ['python', [VEGALITE_MIME]],
-      ['sql', [TABLE_MIME]],
-      ['sql', [TABLE_MIME]],
+      ['duckdb-sql', [TABLE_MIME]],
+      ['duckdb-sql', [TABLE_MIME]],
     ]);
 
     const big = JSON.parse(Buffer.from(codeCells[8].outputs[0].items[0].data).toString('utf8'));
@@ -100,6 +100,55 @@ suite('DuckExplorer notebook', () => {
       .filter((c: any) => c.kind === 'code')
       .map((c: any) => c.outputs?.[0]?.items?.[0]?.mime);
     assert.deepStrictEqual(savedMimes, byLanguage.map(([, m]) => m[0]));
+    // DuckDB SQL cells are `sql` in the file, as before they had their own language.
+    const savedLanguages = saved.cells.filter((c: any) => c.kind === 'code').map((c: any) => c.language);
+    assert.deepStrictEqual(savedLanguages, byLanguage.map(([language]) => (language === 'duckdb-sql' ? 'sql' : language)));
+  });
+
+  test('SQL cells open as DuckDB SQL, whatever the file says, and save as sql', async () => {
+    const file = path.join(workDir, 'languages.duckbook');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        cells: [
+          { kind: 'markdown', language: 'markdown', source: '# Languages' },
+          { kind: 'code', language: 'sql', source: 'SELECT 1 AS saved_as_sql LIMIT 100' },
+          { kind: 'code', source: 'SELECT 2 AS no_language' },
+          { kind: 'code', language: 'duckdb-sql', source: 'SELECT 3 AS duckdb_sql' },
+          { kind: 'code', language: 'python', source: 'x = 1' },
+        ],
+      }),
+    );
+    const notebook = await vscode.workspace.openNotebookDocument(vscode.Uri.file(file));
+    assert.deepStrictEqual(
+      notebook.getCells().map((c) => c.document.languageId),
+      ['markdown', 'duckdb-sql', 'duckdb-sql', 'duckdb-sql', 'python'],
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.set(notebook.uri, [vscode.NotebookEdit.insertCells(5, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 4', 'duckdb-sql')])]);
+    assert.ok(await vscode.workspace.applyEdit(edit));
+    assert.ok(await notebook.save());
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepStrictEqual(saved.cells.map((c: any) => c.language), ['markdown', 'sql', 'sql', 'sql', 'python', 'sql']);
+  });
+
+  test('a sql cell added to a DuckDB notebook becomes DuckDB SQL, and runs', async () => {
+    const notebook = await vscode.workspace.openNotebookDocument(
+      'duckexplorer-notebook',
+      new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 1', 'duckdb-sql')]),
+    );
+    await vscode.window.showNotebookDocument(notebook);
+    // As a cell pasted from another notebook would be.
+    const edit = new vscode.WorkspaceEdit();
+    edit.set(notebook.uri, [vscode.NotebookEdit.insertCells(1, [new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 42 AS pasted LIMIT 100', 'sql')])]);
+    assert.ok(await vscode.workspace.applyEdit(edit));
+    await waitFor(() => notebook.cellAt(1).document.languageId === 'duckdb-sql', 10_000, 'the cell to become DuckDB SQL');
+    const cell = notebook.cellAt(1);
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 1, end: 2 }], document: notebook.uri });
+    await waitFor(() => cell.executionSummary?.success !== undefined, 60_000, 'the cell to run');
+    assert.strictEqual(cell.executionSummary?.success, true, describeFailure(cell));
+    assert.deepStrictEqual(JSON.parse(Buffer.from(cell.outputs[0].items[0].data).toString('utf8')).rows, [['42']]);
   });
 
   test('a Python cell shows its output while it runs', async () => {
@@ -141,7 +190,7 @@ suite('DuckExplorer notebook', () => {
     try {
       const notebook = await vscode.workspace.openNotebookDocument(
         'duckexplorer-notebook',
-        new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, '-- the answer to everything\n\n', 'sql')]),
+        new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, '-- the answer to everything\n\n', 'duckdb-sql')]),
       );
       await vscode.window.showNotebookDocument(notebook);
       const cell = notebook.cellAt(0);
@@ -176,7 +225,7 @@ suite('DuckExplorer notebook', () => {
     const source = "SELECT 'kind ' || (range % 4) AS kind, range AS amount FROM range(100)";
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
-      new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, source, 'sql')]),
+      new vscode.NotebookData([new vscode.NotebookCellData(vscode.NotebookCellKind.Code, source, 'duckdb-sql')]),
     );
     const editor = await vscode.window.showNotebookDocument(notebook);
     await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: 1 }], document: notebook.uri });
@@ -207,7 +256,7 @@ suite('DuckExplorer notebook', () => {
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
       new vscode.NotebookData([
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT * FROM table_that_does_not_exist', 'sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT * FROM table_that_does_not_exist', 'duckdb-sql'),
       ]),
     );
     await vscode.window.showNotebookDocument(notebook);
@@ -225,7 +274,7 @@ suite('DuckExplorer notebook', () => {
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
       new vscode.NotebookData([
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT range AS n, range % 3 AS k FROM range(1000)', 'sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT range AS n, range % 3 AS k FROM range(1000)', 'duckdb-sql'),
       ]),
     );
     await vscode.window.showNotebookDocument(notebook);
@@ -266,8 +315,8 @@ suite('DuckExplorer notebook', () => {
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
       new vscode.NotebookData([
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, source, 'sql'),
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 1 AS later', 'sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, source, 'duckdb-sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, 'SELECT 1 AS later', 'duckdb-sql'),
       ]),
     );
     const editor = await vscode.window.showNotebookDocument(notebook);
@@ -283,7 +332,7 @@ suite('DuckExplorer notebook', () => {
     await api.controller.insertFilteredCell(editor, { type: 'insertFilteredCell', requestId: 0, resultId: table.id, filter, sort });
     assert.strictEqual(notebook.cellCount, 3);
     const added = notebook.cellAt(1);
-    assert.strictEqual(added.document.languageId, 'sql');
+    assert.strictEqual(added.document.languageId, 'duckdb-sql');
     assert.strictEqual(
       added.document.getText(),
       'SELECT *\nFROM (\nSELECT range AS n, range % 3 AS k FROM range(1000)\n)\nWHERE k = 2 AND (n < 100)\nORDER BY n DESC NULLS LAST',
@@ -300,7 +349,7 @@ suite('DuckExplorer notebook', () => {
     const notebook = await vscode.workspace.openNotebookDocument(
       'duckexplorer-notebook',
       new vscode.NotebookData([
-        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, "SELECT range AS n, range % 3 AS k, 'n=' || range AS label FROM range(1000)", 'sql'),
+        new vscode.NotebookCellData(vscode.NotebookCellKind.Code, "SELECT range AS n, range % 3 AS k, 'n=' || range AS label FROM range(1000)", 'duckdb-sql'),
       ]),
     );
     const editor = await vscode.window.showNotebookDocument(notebook);
@@ -364,7 +413,7 @@ suite('DuckExplorer notebook', () => {
     const totals = relations.find((n) => n.relation.name === 'order_totals');
     const editor = await vscode.commands.executeCommand<vscode.TextEditor>('duckexplorer.showViewSql', totals);
     const { document } = editor;
-    assert.strictEqual(document.languageId, 'sql');
+    assert.strictEqual(document.languageId, 'duckdb-sql');
     assert.match(document.uri.path, /order_totals\.sql$/);
     const lines = document.getText().split('\n');
     assert.match(lines[0], /^-- The view .*order_totals as DuckDB keeps it/);
@@ -396,7 +445,7 @@ suite('DuckExplorer notebook', () => {
       'duckexplorer-notebook',
       new vscode.NotebookData([
         new vscode.NotebookCellData(vscode.NotebookCellKind.Code, "import pandas as pd\ntargets = pd.DataFrame({'category': ['x'], 'goal': [1]})", 'python'),
-        ...probes.map((probe) => new vscode.NotebookCellData(vscode.NotebookCellKind.Code, probe.replace('|', ''), 'sql')),
+        ...probes.map((probe) => new vscode.NotebookCellData(vscode.NotebookCellKind.Code, probe.replace('|', ''), 'duckdb-sql')),
       ]),
     );
     await vscode.window.showNotebookDocument(notebook);

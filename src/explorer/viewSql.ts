@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { KernelClient } from '../kernel/kernelProcess';
+import { asDuckSql } from '../sql/documents';
 import { formatSql } from '../sql/format';
 import { nameParts, qualifiedName, TreeNode } from './schemaTree';
 
@@ -40,7 +41,7 @@ export class ViewSqlDocuments implements vscode.TextDocumentContentProvider, vsc
     if (vscode.workspace.textDocuments.some((document) => document.uri.toString() === uri.toString())) {
       this.emitter.fire(uri);
     }
-    const document = await vscode.workspace.openTextDocument(uri);
+    const document = await asDuckSql(await vscode.workspace.openTextDocument(uri));
     return vscode.window.showTextDocument(document, { preview: true });
   }
 

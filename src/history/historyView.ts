@@ -1,7 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { StatementsResult } from '../kernel/protocol';
-import { setBaseDirectory } from '../sql/documents';
+import { asDuckSql, setBaseDirectory } from '../sql/documents';
+import { DUCKDB_SQL } from '../sql/language';
 import { clock, condense, dayKey, dayLabel, formatDuration, HistoryEntry, HistoryOutcome, outcomeText } from './entries';
 import { entryIdOf, HISTORY_SCHEME, historyUri, QueryHistory } from './queryHistory';
 
@@ -92,7 +93,9 @@ export class QueryHistoryView implements vscode.TreeDataProvider<HistoryNode>, v
 
   /** The query in a read-only editor; a preview tab, so the next one shown takes its place. */
   async show(entry: HistoryEntry, preserveFocus = false): Promise<vscode.TextEditor> {
-    const document = await vscode.workspace.openTextDocument(historyUri(entry));
+    const document = await asDuckSql(await vscode.workspace.openTextDocument(historyUri(entry)));
+    // Changing its language closed and opened it again, which forgot its folder.
+    setBaseDirectory(document.uri, entry.cwd);
     return vscode.window.showTextDocument(document, { preview: true, preserveFocus });
   }
 
@@ -104,7 +107,7 @@ export class QueryHistoryView implements vscode.TreeDataProvider<HistoryNode>, v
 
   /** A copy of the query in a new editor, to change and run; it runs in the folder the query ran in. */
   async openCopy(entry: HistoryEntry): Promise<vscode.TextEditor> {
-    const document = await vscode.workspace.openTextDocument({ language: 'sql', content: entry.sql });
+    const document = await vscode.workspace.openTextDocument({ language: DUCKDB_SQL, content: entry.sql });
     setBaseDirectory(document.uri, entry.cwd);
     return vscode.window.showTextDocument(document, { preview: false });
   }

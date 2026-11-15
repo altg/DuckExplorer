@@ -234,16 +234,27 @@ suite('DuckExplorer .sql files', () => {
   });
 
   test('completions in a .sql file once the kernel runs', async () => {
-    const document = await vscode.workspace.openTextDocument({ language: 'sql', content: 'SELECT  FROM picks' });
-    const list = await vscode.commands.executeCommand<vscode.CompletionList>(
-      'vscode.executeCompletionItemProvider',
-      document.uri,
-      new vscode.Position(0, 7),
-    );
-    const labels = list.items.map((item) => (typeof item.label === 'string' ? item.label : item.label.label));
-    for (const name of ['id', 'label', 'count']) {
-      assert.ok(labels.includes(name), `${name} in ${labels.slice(0, 40)}`);
+    // .sql files are `sql`, or DuckDB SQL by files.associations.
+    for (const language of ['sql', 'duckdb-sql']) {
+      const document = await vscode.workspace.openTextDocument({ language, content: 'SELECT  FROM picks' });
+      const list = await vscode.commands.executeCommand<vscode.CompletionList>(
+        'vscode.executeCompletionItemProvider',
+        document.uri,
+        new vscode.Position(0, 7),
+      );
+      const labels = list.items.map((item) => (typeof item.label === 'string' ? item.label : item.label.label));
+      for (const name of ['id', 'label', 'count']) {
+        assert.ok(labels.includes(name), `${name} in ${labels.slice(0, 40)} (${language})`);
+      }
+      assert.ok(labels.indexOf('id') < labels.indexOf('count'), language);
     }
-    assert.ok(labels.indexOf('id') < labels.indexOf('count'));
+  });
+
+  test('DuckDB SQL editors get the Run lenses of .sql files', async () => {
+    const document = await vscode.workspace.openTextDocument({ language: 'duckdb-sql', content: 'SELECT 1 AS one;\nSELECT 2 AS two;\n' });
+    const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', document.uri);
+    assert.strictEqual(lenses.filter((lens) => lens.command?.command === 'duckexplorer.runStatement').length, 2);
+    const result = await vscode.commands.executeCommand<any>('duckexplorer.runStatement', document.uri, document.getText().indexOf('SELECT 2'));
+    assert.deepStrictEqual(result.table.rows, [['2']]);
   });
 });
