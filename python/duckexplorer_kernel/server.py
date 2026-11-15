@@ -44,6 +44,8 @@ _SIDE_METHODS = {
     "chartSpec",
     "chartCode",
 }
+# Answered at once on the reader thread, like an interrupt: cheap, and wanted while a cell runs.
+_IMMEDIATE_METHODS = {"memoryInfo", "clearResults"}
 
 
 class Server:
@@ -94,6 +96,8 @@ class Server:
             "exportResult": lambda p: k.export_result(p["resultId"], p["path"], p["format"], p.get("filter"), p.get("sort")),
             "exportRelation": lambda p: k.export_relation(p["database"], p["schema"], p["name"], p["path"], p["format"]),
             "forgetNotebook": lambda p: k.forget_notebook(p["notebook"]),
+            "memoryInfo": lambda p: k.memory_info(),
+            "clearResults": lambda p: k.clear_results(),
         }
 
     def _preview(self, params: dict) -> dict:
@@ -127,6 +131,8 @@ class Server:
             method = message.get("method")
             if method == "interrupt":
                 self._reply(message.get("id"), {"interrupted": self.kernel.interrupt()})
+            elif method in _IMMEDIATE_METHODS:
+                self._handle(message)
             elif method in _SIDE_METHODS:
                 self._side.submit(self._handle, message)
             elif method == "previewSql" and self._work:

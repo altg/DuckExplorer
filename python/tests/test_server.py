@@ -102,3 +102,51 @@ def test_kernel_exits_when_the_extension_goes_away_mid_cell(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def test_memory_info_is_answered_while_a_cell_runs(tmp_path):
+    env = {**os.environ, "PYTHONPATH": str(PYTHON_DIR), "PYTHONIOENCODING": "utf-8"}
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "duckexplorer_kernel"],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+
+    def send(msg_id, method, params=None):
+        proc.stdin.write((json.dumps({"id": msg_id, "method": method, "params": params or {}}) + "\n").encode())
+        proc.stdin.flush()
+
+    def replies():
+        while True:
+            message = json.loads(proc.stdout.readline())
+            if "id" in message:
+                yield message
+
+    try:
+        assert json.loads(proc.stdout.readline())["method"] == "ready"
+        send(1, "executeSql", {"notebook": "nb", "code": "SELECT range AS n FROM range(100000)"})
+        received = replies()
+        assert next(received)["id"] == 1
+        send(2, "executePython", {"notebook": "nb", "code": "import time\ntime.sleep(3)"})
+        send(3, "memoryInfo")
+        # The memory reply comes first, while the cell still sleeps.
+        info = next(received)
+        assert info["id"] == 3, info
+        memory = info["result"]
+        assert memory["results"]["count"] == 1
+        assert memory["results"]["bytes"] == memory["results"]["largestBytes"]
+        assert 800_000 <= memory["results"]["bytes"] < 900_000  # 8 bytes a row, and a validity bitmap
+        assert memory["results"]["limitBytes"] == 1024 * 1024**2
+        assert memory["processBytes"] > 10 * 1024**2
+        assert memory["duckdbBytes"] >= 0 and memory["duckdbLimit"]
+        send(4, "clearResults")
+        assert next(received) == {"id": 4, "result": {"dropped": 1}}
+        assert next(received)["id"] == 2
+        send(5, "shutdown")
+        assert proc.wait(timeout=10) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()

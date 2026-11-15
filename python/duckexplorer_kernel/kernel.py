@@ -65,6 +65,9 @@ class Kernel:
         # cannot push out every other one (setting duckexplorer.maxResultMemory; 0: no limit).
         self.results.max_bytes = 1024 * 1024**2
         self.max_result_bytes = 512 * 1024**2
+        # For the memory indicator, which is answered at once, beside a running cell and side requests.
+        self._memory_cursor = self.session.con.cursor()
+        self._memory_lock = threading.Lock()
         self._busy: str | None = None
         self._busy_lock = threading.Lock()
         # Why the running preview was stopped: "timeout", or "superseded" by other work.
@@ -108,6 +111,30 @@ class Kernel:
             self.max_result_bytes = self.results.max_bytes // 2
         if "theme" in params:
             pyexec.plotly_theme = "plotly_dark" if params["theme"] == "dark" else "plotly"
+
+    def memory_info(self) -> dict:
+        """Memory the kernel uses, for the status bar: the process (None where it can't be read), the
+        kept results against their limit, and DuckDB's own buffers against its memory_limit."""
+        duckdb_bytes = duckdb_limit = None
+        try:
+            with self._memory_lock:
+                [(duckdb_bytes, duckdb_limit)] = self._memory_cursor.execute(
+                    "SELECT (SELECT sum(memory_usage_bytes) FROM duckdb_memory())::BIGINT, current_setting('memory_limit')"
+                ).fetchall()
+        except duckdb.Error:
+            pass
+        return {
+            "processBytes": process_memory(),
+            "results": self.results.memory(),
+            "duckdbBytes": duckdb_bytes,
+            "duckdbLimit": duckdb_limit,
+        }
+
+    def clear_results(self) -> dict:
+        """Drops every kept result, to give their memory back; their grids say to run the cell again.
+        A result bound to `df` or a `-- name:` stays in the notebook's namespace until rebound."""
+        dropped = self.results.clear()
+        return {"dropped": dropped}
 
     # -- notebooks -----------------------------------------------------------------
 
@@ -562,6 +589,46 @@ def _frame_to_arrow(frame: Any, pd: Any) -> pa.Table:
         frame = frame.copy(deep=False)  # never rename the user's own DataFrame
     frame.columns = [str(c) for c in frame.columns]
     return pa.Table.from_pandas(frame, preserve_index=False)
+
+
+def process_memory() -> int | None:
+    """The kernel process's resident memory in bytes (the working set on Windows), or None where
+    neither the system nor psutil says."""
+    try:
+        if sys.platform == "win32":
+            from ctypes import wintypes
+
+            class Counters(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                    (name, ctypes.c_size_t)
+                    for name in (
+                        "PeakWorkingSetSize",
+                        "WorkingSetSize",
+                        "QuotaPeakPagedPoolUsage",
+                        "QuotaPagedPoolUsage",
+                        "QuotaPeakNonPagedPoolUsage",
+                        "QuotaNonPagedPoolUsage",
+                        "PagefileUsage",
+                        "PeakPagefileUsage",
+                    )
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            counters = Counters(cb=ctypes.sizeof(Counters))
+            if kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+                return int(counters.WorkingSetSize)
+        elif os.path.exists("/proc/self/statm"):
+            with open("/proc/self/statm") as statm:
+                return int(statm.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError, AttributeError):
+        pass
+    if importlib.util.find_spec("psutil") is not None:  # macOS, and anything else
+        import psutil
+
+        return int(psutil.Process().memory_info().rss)
+    return None
 
 
 def _ms_since(started: float) -> float:
