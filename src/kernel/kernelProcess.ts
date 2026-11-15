@@ -2,10 +2,16 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
 import { ChildProcess, spawn } from 'child_process';
-import { KernelInfo, OutputUpdate } from './protocol';
+import { memoryLabel, memoryLines } from './memory';
+import { KernelInfo, MemoryInfo, OutputUpdate } from './protocol';
 import { reportStartupFailure, resolvePython } from './pythonEnv';
 
 const STARTUP_TIMEOUT_MS = 60_000;
+// The memory indicator: asked again this long after a request settles, and this often while a cell runs.
+const MEMORY_SETTLE_MS = 300;
+const MEMORY_BUSY_MS = 2_000;
+// Requests after which memory can't have changed (and memoryInfo itself, which would loop).
+const MEMORY_QUIET = new Set(['memoryInfo', 'interrupt', 'configure', 'shutdown']);
 
 interface Pending {
   method: string;
@@ -40,6 +46,10 @@ export class KernelClient implements vscode.Disposable {
   private failed = false;
   private readonly statusItem = vscode.window.createStatusBarItem('duckexplorer.kernel', vscode.StatusBarAlignment.Left, 50);
   private readonly startedEmitter = new vscode.EventEmitter<KernelInfo>();
+  private memory: MemoryInfo | undefined;
+  private memoryAsked = false;
+  private memorySoon: NodeJS.Timeout | undefined;
+  private memoryWhileBusy: NodeJS.Timeout | undefined;
   /** Fires after each (re)start, once the kernel is ready; listeners restore attached databases. */
   readonly onDidStart = this.startedEmitter.event;
 
@@ -88,7 +98,9 @@ export class KernelClient implements vscode.Disposable {
    */
   async execute<T>(method: string, params: Record<string, unknown>, onOutput?: (update: OutputUpdate) => void): Promise<T> {
     await this.ensureStarted();
-    this.busyCount++;
+    if (this.busyCount++ === 0) {
+      this.memoryWhileBusy = setInterval(() => void this.refreshMemory(), MEMORY_BUSY_MS);
+    }
     this.updateStatus();
     const stream = onOutput ? this.nextStream++ : undefined;
     if (stream !== undefined) this.streams.set(stream, onOutput!);
@@ -96,7 +108,10 @@ export class KernelClient implements vscode.Disposable {
       return await this.send<T>(method, stream === undefined ? params : { ...params, stream });
     } finally {
       if (stream !== undefined) this.streams.delete(stream);
-      this.busyCount--;
+      if (--this.busyCount === 0) {
+        clearInterval(this.memoryWhileBusy);
+        this.memoryWhileBusy = undefined;
+      }
       this.updateStatus();
     }
   }
@@ -105,6 +120,32 @@ export class KernelClient implements vscode.Disposable {
   async interrupt(): Promise<void> {
     if (this.isRunning) {
       await this.send('interrupt', {}).catch(() => undefined);
+    }
+  }
+
+  /** Drops the results the kernel keeps for grids, to give their memory back; how many it dropped. Never starts the kernel. */
+  async clearResults(): Promise<number> {
+    if (!this.isRunning) {
+      return 0;
+    }
+    const { dropped } = await this.send<{ dropped: number }>('clearResults', {});
+    await this.refreshMemory();
+    return dropped;
+  }
+
+  /** Asks the kernel how much memory it uses, for the status bar. */
+  async refreshMemory(): Promise<void> {
+    if (!this.isRunning || this.memoryAsked) {
+      return;
+    }
+    this.memoryAsked = true;
+    try {
+      this.memory = await this.send<MemoryInfo>('memoryInfo', {});
+      this.updateStatus();
+    } catch {
+      // A stopped kernel: the status bar goes without.
+    } finally {
+      this.memoryAsked = false;
     }
   }
 
@@ -127,6 +168,7 @@ export class KernelClient implements vscode.Disposable {
     const proc = this.proc;
     this.proc = undefined;
     this.info = undefined;
+    this.memory = undefined;
     if (proc) {
       try {
         proc.stdin?.end(JSON.stringify({ id: 0, method: 'shutdown' }) + '\n');
@@ -142,6 +184,8 @@ export class KernelClient implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     this.stop();
+    clearTimeout(this.memorySoon);
+    clearInterval(this.memoryWhileBusy);
     this.statusItem.dispose();
     this.startedEmitter.dispose();
   }
@@ -215,6 +259,7 @@ export class KernelClient implements vscode.Disposable {
           this.log.warn(`Kernel exited (code ${code ?? signal})`);
           this.proc = undefined;
           this.info = undefined;
+          this.memory = undefined;
           this.rejectAll(new Error('The DuckExplorer kernel stopped. Run the cell again to restart it.'));
           this.updateStatus();
         }
@@ -234,6 +279,7 @@ export class KernelClient implements vscode.Disposable {
       );
       await this.send('configure', this.configure());
       this.updateStatus();
+      void this.refreshMemory();
       this.startedEmitter.fire(info);
       return info;
     } catch (err) {
@@ -273,6 +319,12 @@ export class KernelClient implements vscode.Disposable {
       return;
     }
     this.pending.delete(message.id);
+    if (!MEMORY_QUIET.has(pending.method) && !this.memorySoon) {
+      this.memorySoon = setTimeout(() => {
+        this.memorySoon = undefined;
+        void this.refreshMemory();
+      }, MEMORY_SETTLE_MS);
+    }
     if (message.error) {
       if (message.error.traceback) {
         this.log.error(`${pending.method} failed:\n${message.error.traceback}`);
@@ -299,12 +351,21 @@ export class KernelClient implements vscode.Disposable {
       this.statusItem.tooltip = 'DuckExplorer kernel: not running (starts when needed)';
     } else if (!this.info) {
       return; // start() shows the starting state
-    } else if (this.busyCount > 0) {
-      this.statusItem.text = `$(sync~spin) DuckDB ${this.info.duckdb}`;
-      this.statusItem.tooltip = 'DuckExplorer kernel: running a cell';
     } else {
-      this.statusItem.text = `$(database) DuckDB ${this.info.duckdb}`;
-      this.statusItem.tooltip = `DuckExplorer kernel: idle\nPython ${this.info.python} (${this.info.executable})`;
+      const busy = this.busyCount > 0;
+      const memory = this.memory ? ` · ${memoryLabel(this.memory)}` : '';
+      this.statusItem.text = `${busy ? '$(sync~spin)' : '$(database)'} DuckDB ${this.info.duckdb}${memory}`;
+      const tooltip = new vscode.MarkdownString(undefined, true);
+      tooltip.isTrusted = { enabledCommands: ['duckexplorer.freeResultMemory', 'duckexplorer.showLog'] };
+      tooltip.appendMarkdown(`**DuckExplorer kernel**: ${busy ? 'running a cell' : 'idle'}  \n`);
+      tooltip.appendText(`Python ${this.info.python} (${this.info.executable})`);
+      if (this.memory) {
+        tooltip.appendMarkdown(`\n\n${memoryLines(this.memory).join('  \n')}`);
+        tooltip.appendMarkdown(
+          '\n\n[$(trash) Free result memory](command:duckexplorer.freeResultMemory) · [$(output) Show log](command:duckexplorer.showLog)',
+        );
+      }
+      this.statusItem.tooltip = tooltip;
     }
     this.statusItem.show();
   }

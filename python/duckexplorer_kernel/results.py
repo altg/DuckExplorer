@@ -14,6 +14,7 @@ from . import chart, export, filters
 from . import profile as column_profile
 from .session import Session, quote_ident
 
+# Results kept, at most; ResultStore.max_bytes bounds them by size as well.
 MAX_RESULTS = 20
 # Live previews, kept apart so that they don't push results out: the one shown, and the one before.
 MAX_PREVIEWS = 2
@@ -42,6 +43,10 @@ class StoredResult:
     views: OrderedDict[tuple[str, SortKey | None], pa.ChunkedArray] = field(default_factory=OrderedDict)
     # A table summary's sample of a large relation: the relation's SQL name, so exports read every row.
     sample_of: str | None = None
+    # The query returned more rows than were kept: the result was cut off at the memory limit.
+    truncated: bool = False
+    # Memory the rows take (Arrow's count), for eviction by size.
+    nbytes: int = 0
 
     @property
     def row_count(self) -> int:
@@ -52,6 +57,8 @@ class ResultStore:
     def __init__(self, session: Session, capacity: int = MAX_RESULTS) -> None:
         self._session = session
         self._capacity = capacity
+        # Memory, in bytes, the stored results may take together (0: no limit). Live previews are exempt.
+        self.max_bytes = 0
         self._results: OrderedDict[str, StoredResult] = OrderedDict()
         self._previews: OrderedDict[str, StoredResult] = OrderedDict()
         self._lock = threading.Lock()
@@ -59,7 +66,9 @@ class ResultStore:
         self._prefix = secrets.token_hex(3)
         self._next_id = 1
 
-    def add(self, table: pa.Table, types: list[str] | None = None, preview: bool = False) -> StoredResult:
+    def add(
+        self, table: pa.Table, types: list[str] | None = None, preview: bool = False, truncated: bool = False
+    ) -> StoredResult:
         scan = table.rename_columns([f"c{i}" for i in range(table.num_columns)])
         if types is None:
             with self._session.side_lock:
@@ -68,12 +77,50 @@ class ResultStore:
         with self._lock:
             result_id = f"{self._prefix}-{self._next_id}"
             self._next_id += 1
-            stored = StoredResult(result_id, table, scan, columns)
-            results, capacity = (self._previews, MAX_PREVIEWS) if preview else (self._results, self._capacity)
+            stored = StoredResult(result_id, table, scan, columns, truncated=truncated, nbytes=table.nbytes)
+            if preview:
+                self._previews[result_id] = stored
+                while len(self._previews) > MAX_PREVIEWS:
+                    self._previews.popitem(last=False)
+                return stored
+            results = self._results
             results[result_id] = stored
-            while len(results) > capacity:
-                results.popitem(last=False)
+            held = sum(result.nbytes for result in results.values())
+            # Oldest first, and never the newest: it is the one about to be shown.
+            while len(results) > self._capacity or (
+                self.max_bytes > 0 and len(results) > 1 and held > self.max_bytes
+            ):
+                _, evicted = results.popitem(last=False)
+                held -= evicted.nbytes
         return stored
+
+    def make_room(self, incoming: int) -> None:
+        """Drops the oldest results until those kept and a result being read (`incoming` bytes so far)
+        fit the limit together. Called as the rows arrive, so that the kernel never holds the old
+        results and a new one at once; add() alone would only evict once the new one was read."""
+        if self.max_bytes <= 0:
+            return
+        with self._lock:
+            results = self._results
+            held = sum(result.nbytes for result in results.values())
+            while results and held + incoming > self.max_bytes:
+                _, evicted = results.popitem(last=False)
+                held -= evicted.nbytes
+
+    def memory(self) -> dict:
+        """What the kept results take, for the memory indicator (live previews are left out: 101 rows each)."""
+        with self._lock:
+            sizes = [result.nbytes for result in self._results.values()]
+        return {"bytes": sum(sizes), "count": len(sizes), "largestBytes": max(sizes, default=0), "limitBytes": self.max_bytes}
+
+    def clear(self) -> int:
+        """Drops every kept result (live previews too); their grids then say to run the cell again.
+        Returns how many were dropped."""
+        with self._lock:
+            dropped = len(self._results) + len(self._previews)
+            self._results.clear()
+            self._previews.clear()
+        return dropped
 
     def get(self, result_id: str) -> StoredResult:
         with self._lock:
@@ -178,9 +225,10 @@ class ResultStore:
         file_format: str,
         filter_spec: dict | None = None,
         sort: dict | None = None,
-    ) -> int:
+    ) -> tuple[int, bool]:
         """Writes a view (the grid's filter and sort) to a file, as the grid shows it; returns the number of
-        rows. A table summary's sample exports every row of its relation, filtered and sorted in SQL."""
+        rows, and whether the result was cut off so the file lacks some of the query's rows. A table
+        summary's sample exports every row of its relation, filtered and sorted in SQL."""
         stored = self.get(result_id)
         spec = filters.normalize(filter_spec)
         if not stored.columns:
@@ -196,7 +244,7 @@ class ResultStore:
                     query += f" WHERE {where}"
                 if sort_key is not None:
                     query += f" ORDER BY {filters.order_sql(sort_key, stored.columns, side)}"
-                return export.copy(side, query, path, file_format)
+                return export.copy(side, query, path, file_format), False
             rows = self._view(stored, sort_key, spec)
             export.check_format(file_format, stored.row_count if rows is None else len(rows))
             # Taken in display order, which COPY keeps (DuckDB preserves the insertion order of a scan).
@@ -204,13 +252,13 @@ class ResultStore:
             names = ", ".join(f"c{i} AS {quote_ident(c['name'])}" for i, c in enumerate(stored.columns))
             side.register(_EXPORT_VIEW, data)
             try:
-                return export.copy(side, f"SELECT {names} FROM {_EXPORT_VIEW}", path, file_format)
+                return export.copy(side, f"SELECT {names} FROM {_EXPORT_VIEW}", path, file_format), stored.truncated
             finally:
                 side.unregister(_EXPORT_VIEW)
 
     def describe(self, stored: StoredResult, page_size: int, **extra) -> dict:
         """The table payload sent to the notebook renderer: metadata plus the first page."""
-        return {
+        described = {
             "id": stored.id,
             "columns": stored.columns,
             "rowCount": stored.row_count,
@@ -218,6 +266,11 @@ class ResultStore:
             "pageSize": page_size,
             **extra,
         }
+        if stored.truncated:
+            # The grid tells this from a live preview's `truncated` by the limit beside it.
+            described["truncated"] = True
+            described["memoryLimitMb"] = _megabytes(self.max_bytes // 2)
+        return described
 
     # -- views (call with the side lock held) -------------------------------------------
 
@@ -271,6 +324,12 @@ class ResultStore:
             if spec is None:
                 raise
             raise filters.InvalidFilter(str(exc).strip()) from None
+
+
+def _megabytes(size: int) -> float | int:
+    """A size in MB as the setting states it: whole when it is, else to one decimal (half of 1 MB)."""
+    mb = size / 1024**2
+    return int(mb) if mb == int(mb) else round(mb, 1)
 
 
 def _sort_key(sort: dict | None, stored: StoredResult) -> SortKey | None:

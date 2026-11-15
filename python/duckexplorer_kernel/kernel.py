@@ -18,13 +18,17 @@ from typing import Any, Callable, Iterator
 import duckdb
 import pyarrow as pa
 
-from . import catalog, export, pyexec, script
+from . import catalog, export, fetch, pyexec, script
 from .filters import InvalidFilter
 from .results import ResultStore, StoredResult
 from .session import Session, quote_ident
 
-# Larger tables and views are summarized from a random sample of this many rows.
+# Larger tables and views are summarized from a random sample of this many rows (fewer when wide
+# rows would pass the memory limit for a result).
 SUMMARY_ROWS = 1_000_000
+# Rows read to measure how wide rows are before taking more of them: a table's, a DataFrame's.
+_SUMMARY_PROBE_ROWS = 1_000
+_FRAME_PROBE_ROWS = 10_000
 
 # `-- name: sales` on the first non-blank line of a SQL cell binds the result to `sales`.
 _NAME_DIRECTIVE = re.compile(r"\A\s*--\s*name\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -46,8 +50,8 @@ _SIDE_EFFECTS = re.compile(r"\b(nextval|setseed)\s*\(", re.IGNORECASE)
 @dataclass
 class NotebookState:
     namespace: dict
-    # name -> Arrow table bound by a SQL cell; turned into pandas when a Python cell next runs.
-    pending: dict[str, pa.Table] = field(default_factory=dict)
+    # name -> the result bound by a SQL cell; its rows become pandas when a Python cell next runs.
+    pending: dict[str, StoredResult] = field(default_factory=dict)
 
 
 class Kernel:
@@ -57,6 +61,13 @@ class Kernel:
         self.notebooks: dict[str, NotebookState] = {}
         self.page_size = 200
         self.max_pandas_rows = 1_000_000
+        # Memory for the results kept for grids, and for one of them: half, so that a new large result
+        # cannot push out every other one (setting duckexplorer.maxResultMemory; 0: no limit).
+        self.results.max_bytes = 1024 * 1024**2
+        self.max_result_bytes = 512 * 1024**2
+        # For the memory indicator, which is answered at once, beside a running cell and side requests.
+        self._memory_cursor = self.session.con.cursor()
+        self._memory_lock = threading.Lock()
         self._busy: str | None = None
         self._busy_lock = threading.Lock()
         # Why the running preview was stopped: "timeout", or "superseded" by other work.
@@ -95,8 +106,35 @@ class Kernel:
             self.page_size = int(params["pageSize"])
         if "maxPandasRows" in params:
             self.max_pandas_rows = int(params["maxPandasRows"])
+        if "maxResultMemory" in params:
+            self.results.max_bytes = max(0, int(float(params["maxResultMemory"]) * 1024**2))
+            self.max_result_bytes = self.results.max_bytes // 2
         if "theme" in params:
             pyexec.plotly_theme = "plotly_dark" if params["theme"] == "dark" else "plotly"
+
+    def memory_info(self) -> dict:
+        """Memory the kernel uses, for the status bar: the process (None where it can't be read), the
+        kept results against their limit, and DuckDB's own buffers against its memory_limit."""
+        duckdb_bytes = duckdb_limit = None
+        try:
+            with self._memory_lock:
+                [(duckdb_bytes, duckdb_limit)] = self._memory_cursor.execute(
+                    "SELECT (SELECT sum(memory_usage_bytes) FROM duckdb_memory())::BIGINT, current_setting('memory_limit')"
+                ).fetchall()
+        except duckdb.Error:
+            pass
+        return {
+            "processBytes": process_memory(),
+            "results": self.results.memory(),
+            "duckdbBytes": duckdb_bytes,
+            "duckdbLimit": duckdb_limit,
+        }
+
+    def clear_results(self) -> dict:
+        """Drops every kept result, to give their memory back; their grids say to run the cell again.
+        A result bound to `df` or a `-- name:` stays in the notebook's namespace until rebound."""
+        dropped = self.results.clear()
+        return {"dropped": dropped}
 
     # -- notebooks -----------------------------------------------------------------
 
@@ -264,9 +302,18 @@ class Kernel:
                     elapsed = _ms_since(started)
                     capture.add({"type": "text", "text": f"Statement executed in {elapsed:,.0f} ms"})
                 else:
-                    table = rel.to_arrow_table()
+                    types = [str(t) for t in rel.types]
+                    # A query can stop once it has filled its share of memory; any other statement runs
+                    # to its end (an INSERT ... RETURNING inserts every row), keeping only that share.
+                    kind = script.statement_kind(self.session.con, code)
+                    fetched = fetch.read(
+                        fetch.arrow_reader(rel),
+                        self.max_result_bytes,
+                        stop_early=kind == "SELECT",
+                        on_grow=self.results.make_room,
+                    )
                     elapsed = _ms_since(started)
-                    stored = self.results.add(table, [str(t) for t in rel.types])
+                    stored = self.results.add(fetched.table, types, truncated=fetched.truncated)
                     bound = self._bind_result(state, code, stored)
                     capture.add(
                         {
@@ -312,12 +359,18 @@ class Kernel:
         An error says which statement failed and, when DuckDB says, where in it (a UTF-16 offset).
         """
         reply: dict[str, Any] = {"completed": 0}
-        outcome: tuple[pa.Table, list[str]] | str = ""
+        outcome: script.Rows | str = ""
         with self._running("sql", cwd):
             started = time.perf_counter()
             for index, statement in enumerate(statements):
                 try:
-                    outcome = script.run(self.session.con, statement, rows=index == len(statements) - 1)
+                    outcome = script.run(
+                        self.session.con,
+                        statement,
+                        rows=index == len(statements) - 1,
+                        max_bytes=self.max_result_bytes,
+                        on_grow=self.results.make_room,
+                    )
                 except (KeyboardInterrupt, duckdb.InterruptException):
                     interrupted = _interrupted()
                     reply["error"] = {**interrupted, "message": interrupted["evalue"], "statement": index}
@@ -333,8 +386,8 @@ class Kernel:
             elapsed = round(_ms_since(started), 1)
         reply["elapsedMs"] = elapsed
         if "error" not in reply:
-            if isinstance(outcome, tuple):
-                stored = self.results.add(*outcome)
+            if isinstance(outcome, script.Rows):
+                stored = self.results.add(outcome.table, outcome.types, truncated=outcome.truncated)
                 reply["table"] = self.results.describe(stored, self.page_size, elapsedMs=elapsed)
             else:
                 reply["message"] = outcome
@@ -352,20 +405,29 @@ class Kernel:
     def summarize(self, database: str, schema: str, name: str) -> dict:
         """A table or view as a stored result, for the summary panel (Column Explorer, rows, filters).
 
-        Holds every row, or a reservoir sample of SUMMARY_ROWS rows when there are more; then the
-        payload's `sampledFrom` is the full row count, and exports read the relation instead. Runs on the
-        side cursor, beside a running cell.
+        Holds every row, or a reservoir sample when there are more than SUMMARY_ROWS or than fit the
+        memory limit for a result; then the payload's `sampledFrom` is the full row count, and exports
+        read the relation instead. Runs on the side cursor, beside a running cell.
         """
         qualified = ".".join(quote_ident(part) for part in (database, schema, name))
         started = time.perf_counter()
         with self.session.side_lock:
             side = self.session.side
             [(count,)] = side.execute(f"SELECT count(*) FROM {qualified}").fetchall()
-            sample = f" USING SAMPLE reservoir({SUMMARY_ROWS} ROWS) REPEATABLE (42)" if count > SUMMARY_ROWS else ""
+            sample_rows = SUMMARY_ROWS
+            if self.max_result_bytes > 0:
+                # Sized by row width, so that a wide table's sample fits the limit too.
+                probe = side.sql(f"SELECT * FROM {qualified} LIMIT {_SUMMARY_PROBE_ROWS}").to_arrow_table()
+                row_bytes = max(1, probe.nbytes // max(1, probe.num_rows))
+                sample_rows = min(SUMMARY_ROWS, max(_SUMMARY_PROBE_ROWS, self.max_result_bytes // row_bytes))
+            sample = f" USING SAMPLE reservoir({sample_rows} ROWS) REPEATABLE (42)" if count > sample_rows else ""
             rel = side.sql(f"SELECT * FROM {qualified}{sample}")
-            table = rel.to_arrow_table()
             types = [str(t) for t in rel.types]
-        stored = self.results.add(table, types)
+            # Rows wider than the probe's could still pass the limit.
+            fetched = fetch.read(
+                fetch.arrow_reader(rel), self.max_result_bytes, stop_early=True, on_grow=self.results.make_room
+            )
+        stored = self.results.add(fetched.table, types, truncated=fetched.truncated)
         extra: dict[str, Any] = {"elapsedMs": round(_ms_since(started), 1)}
         if sample:
             stored.sample_of = qualified
@@ -407,7 +469,8 @@ class Kernel:
     def export_result(
         self, result_id: str, path: str, file_format: str, filter_spec: dict | None = None, sort: dict | None = None
     ) -> dict:
-        return {"rowCount": self.results.export(result_id, path, file_format, filter_spec, sort)}
+        count, truncated = self.results.export(result_id, path, file_format, filter_spec, sort)
+        return {"rowCount": count, "truncated": truncated}
 
     def export_relation(self, database: str, schema: str, name: str, path: str, file_format: str) -> dict:
         """Every row of a table or view, written to a file (Export in the Databases view)."""
@@ -425,7 +488,7 @@ class Kernel:
         for name in names:
             # Bound as Arrow right away (SQL cells can scan it); pandas conversion is deferred.
             state.namespace[name] = stored.table
-            state.pending[name] = stored.table
+            state.pending[name] = stored
         return names
 
     def _materialize_pending(self, state: NotebookState) -> None:
@@ -433,7 +496,8 @@ class Kernel:
         if not pending or importlib.util.find_spec("pandas") is None:
             return
         converted: dict[int, Any] = {}
-        for name, table in pending.items():
+        for name, stored in pending.items():
+            table = stored.table
             if state.namespace.get(name) is not table:
                 continue  # user rebound the name since
             key = id(table)
@@ -441,12 +505,26 @@ class Kernel:
                 limit = self.max_pandas_rows
                 if limit <= 0:
                     continue
-                if table.num_rows > limit:
+                capped = table.num_rows > limit
+                if stored.truncated:
+                    # One note: the query's own row count is unknown, so the "of N rows" below can't be said.
+                    settings = (
+                        "settings duckexplorer.maxResultMemory and duckexplorer.maxPandasRows"
+                        if capped
+                        else "setting duckexplorer.maxResultMemory"
+                    )
+                    print(
+                        f"Note: `{name}` holds the first {min(table.num_rows, limit):,} rows: the result was cut "
+                        f"off at the memory limit ({settings}).",
+                        file=sys.stderr,
+                    )
+                elif capped:
                     print(
                         f"Note: `{name}` holds the first {limit:,} of {table.num_rows:,} rows "
                         "(setting duckexplorer.maxPandasRows).",
                         file=sys.stderr,
                     )
+                if capped:
                     table = table.slice(0, limit)
                 converted[key] = self._to_pandas(table)
             state.namespace[name] = converted[key]
@@ -461,38 +539,95 @@ class Kernel:
 
     def _table_output(self, obj: Any) -> dict | None:
         """Table output for DataFrame-like values displayed from Python cells, else None."""
-        table = _as_arrow(obj)
-        if table is None:
-            return None
         types = [str(t) for t in obj.types] if isinstance(obj, duckdb.DuckDBPyRelation) else None
-        stored = self.results.add(table, types)
+        fetched = _as_arrow(obj, self.max_result_bytes, self.results.make_room)
+        if fetched is None:
+            return None
+        stored = self.results.add(fetched.table, types, truncated=fetched.truncated)
         return {"type": "table", "table": self.results.describe(stored, self.page_size)}
 
 
-def _as_arrow(obj: Any) -> pa.Table | None:
+def _as_arrow(obj: Any, max_bytes: int, make_room: Callable[[int], None]) -> fetch.Fetched | None:
+    """A displayed value's rows as Arrow, as many as fit in `max_bytes` (0: all of them). `make_room`
+    is told the size of rows about to be made, so that older results can go first."""
     if isinstance(obj, pa.Table):
-        return obj
+        return fetch.cap_table(obj, max_bytes)
     if isinstance(obj, pa.RecordBatch):
-        return pa.Table.from_batches([obj])
+        return fetch.cap_table(pa.Table.from_batches([obj]), max_bytes)
     if isinstance(obj, duckdb.DuckDBPyRelation):
-        return obj.to_arrow_table()
+        return fetch.read(fetch.arrow_reader(obj), max_bytes, stop_early=True, on_grow=make_room)
     pd = sys.modules.get("pandas")
     if pd is not None:
         if isinstance(obj, pd.Series):
             obj = obj.to_frame()
         if isinstance(obj, pd.DataFrame):
-            frame = obj
-            if not isinstance(frame.index, pd.RangeIndex) or frame.index.name is not None:
-                frame = frame.reset_index()
-            else:
-                frame = frame.copy(deep=False)  # never rename the user's own DataFrame
-            frame.columns = [str(c) for c in frame.columns]
-            return pa.Table.from_pandas(frame, preserve_index=False)
+            truncated = False
+            if max_bytes > 0 and len(obj) > _FRAME_PROBE_ROWS:
+                # Measured on the first rows, so that a frame that won't fit is never converted whole.
+                probe = _frame_to_arrow(obj.iloc[:_FRAME_PROBE_ROWS], pd)
+                row_bytes = max(1, probe.nbytes // max(1, probe.num_rows))
+                limit_rows = max(1, max_bytes // row_bytes)
+                if limit_rows < len(obj):
+                    obj = obj.iloc[:limit_rows]
+                    truncated = True
+                make_room(len(obj) * row_bytes)
+            capped = fetch.cap_table(_frame_to_arrow(obj, pd), max_bytes)
+            return fetch.Fetched(capped.table, truncated or capped.truncated)
     if hasattr(obj, "__arrow_c_stream__") and not isinstance(obj, type):
         try:
-            return pa.table(obj)
+            table = pa.table(obj)
         except Exception:
             return None
+        return fetch.cap_table(table, max_bytes)
+    return None
+
+
+def _frame_to_arrow(frame: Any, pd: Any) -> pa.Table:
+    if not isinstance(frame.index, pd.RangeIndex) or frame.index.name is not None:
+        frame = frame.reset_index()
+    else:
+        frame = frame.copy(deep=False)  # never rename the user's own DataFrame
+    frame.columns = [str(c) for c in frame.columns]
+    return pa.Table.from_pandas(frame, preserve_index=False)
+
+
+def process_memory() -> int | None:
+    """The kernel process's resident memory in bytes (the working set on Windows), or None where
+    neither the system nor psutil says."""
+    try:
+        if sys.platform == "win32":
+            from ctypes import wintypes
+
+            class Counters(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                    (name, ctypes.c_size_t)
+                    for name in (
+                        "PeakWorkingSetSize",
+                        "WorkingSetSize",
+                        "QuotaPeakPagedPoolUsage",
+                        "QuotaPagedPoolUsage",
+                        "QuotaPeakNonPagedPoolUsage",
+                        "QuotaNonPagedPoolUsage",
+                        "PagefileUsage",
+                        "PeakPagefileUsage",
+                    )
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            counters = Counters(cb=ctypes.sizeof(Counters))
+            if kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+                return int(counters.WorkingSetSize)
+        elif os.path.exists("/proc/self/statm"):
+            with open("/proc/self/statm") as statm:
+                return int(statm.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError, AttributeError):
+        pass
+    if importlib.util.find_spec("psutil") is not None:  # macOS, and anything else
+        import psutil
+
+        return int(psutil.Process().memory_info().rss)
     return None
 
 

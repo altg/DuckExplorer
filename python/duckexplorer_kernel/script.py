@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
-import warnings
+from dataclasses import dataclass
+from typing import Callable
 
 import duckdb
 import pyarrow as pa
+
+from . import fetch
 
 # DuckDB ends the message of an error at a known place with an excerpt of that line and a caret
 # (duckdb 2 underlines the whole token: ^^^^).
@@ -22,14 +25,32 @@ _COUNT = [("Count", "BIGINT")]
 _SUCCESS = [("Success", "BOOLEAN")]
 
 
-def run(con: duckdb.DuckDBPyConnection, statement: str, rows: bool = True) -> tuple[pa.Table, list[str]] | str:
-    """Runs one statement. Rows come back with DuckDB's names for their types (unless `rows` is
-    false: nobody will see them); a statement without rows as a message such as "3 rows inserted"
-    (empty when there is nothing to say).
+@dataclass
+class Rows:
+    """A statement's rows, with DuckDB's names for their types."""
 
-    Uses execute() rather than sql(): the relation API drops the error's position for binder errors.
+    table: pa.Table
+    types: list[str]
+    # The statement returned more rows than fit the memory limit; `table` holds the first of them.
+    truncated: bool = False
+
+
+def run(
+    con: duckdb.DuckDBPyConnection,
+    statement: str,
+    rows: bool = True,
+    max_bytes: int = 0,
+    on_grow: Callable[[int], None] | None = None,
+) -> Rows | str:
+    """Runs one statement. Rows come back as far as they fit in `max_bytes` (0: all of them), unless
+    `rows` is false: nobody will see them; `on_grow` is told their size as they arrive (fetch.read).
+    A statement without rows comes back as a message such as "3 rows inserted" (empty when there is
+    nothing to say).
     """
     kind = statement_kind(con, statement)
+    if kind == "SELECT":
+        return _query(con, statement, rows, max_bytes, on_grow)
+    # Not a query: execute(), which keeps the error's position, and the statement runs to its end.
     con.execute(statement)
     description = con.description
     if description is None:
@@ -41,11 +62,37 @@ def run(con: duckdb.DuckDBPyConnection, statement: str, rows: bool = True) -> tu
     if is_report(kind, shape) or not rows:
         _finish(con)
         return ""
-    with warnings.catch_warnings():
-        # duckdb 2 copies a DB-API result's rows once more to make them Arrow. What it suggests instead,
-        # con.sql(statement), would lose the position of binder errors.
-        warnings.filterwarnings("ignore", "Arrow output on a DB-API result", UserWarning)
-        return con.to_arrow_table(), [type_name for _, type_name in shape]
+    fetched = fetch.read(fetch.arrow_reader(con), max_bytes, stop_early=False, on_grow=on_grow)
+    return Rows(fetched.table, [type_name for _, type_name in shape], fetched.truncated)
+
+
+def _query(
+    con: duckdb.DuckDBPyConnection,
+    statement: str,
+    rows: bool,
+    max_bytes: int,
+    on_grow: Callable[[int], None] | None,
+) -> Rows | str:
+    """A SELECT runs through sql(), whose reader can stop it at the limit: duckdb 2's execute() loads
+    the whole result before anything can read it."""
+    try:
+        rel = con.sql(statement)
+    except (duckdb.BinderException, duckdb.ParserException, duckdb.CatalogException) as exc:
+        # sql() drops the error's position; execute() fails the same way, with it, before running anything.
+        con.execute(statement)
+        # It did not fail after all: leave the connection free (duckdb 2 refuses the next statement
+        # while a result is open) and report the first error.
+        fetch.first_batch(fetch.arrow_reader(con))
+        raise exc
+    if rel is None:
+        return ""
+    types = [str(t) for t in rel.types]
+    reader = fetch.arrow_reader(rel)
+    if not rows:
+        fetch.first_batch(reader)  # as far as duckdb 1.x's execute() ran an unread result
+        return ""
+    fetched = fetch.read(reader, max_bytes, stop_early=True, on_grow=on_grow)
+    return Rows(fetched.table, types, fetched.truncated)
 
 
 def statement_kind(con: duckdb.DuckDBPyConnection, sql: str) -> str:
