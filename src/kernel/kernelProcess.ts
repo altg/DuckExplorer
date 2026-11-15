@@ -165,20 +165,49 @@ export class KernelClient implements vscode.Disposable {
   }
 
   stop(): void {
+    void this.stopAndWait(2_000);
+  }
+
+  /**
+   * For deactivate(): stops the kernel and resolves once its process has gone, killing it if it hasn't
+   * exited by itself within `ms`. A timer started in stop() would never fire once the extension host
+   * exits, so here the extension host waits for it.
+   */
+  shutdown(ms = 1_500): Promise<void> {
+    return this.stopAndWait(ms);
+  }
+
+  private stopAndWait(ms: number): Promise<void> {
     const proc = this.proc;
     this.proc = undefined;
     this.info = undefined;
     this.memory = undefined;
+    let exited: Promise<void> = Promise.resolve();
     if (proc) {
+      exited = new Promise<void>((resolve) => {
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+          resolve();
+          return;
+        }
+        const timer = setTimeout(() => {
+          proc.kill();
+          resolve();
+        }, ms);
+        timer.unref();
+        proc.once('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
       try {
         proc.stdin?.end(JSON.stringify({ id: 0, method: 'shutdown' }) + '\n');
       } catch {
         // already gone
       }
-      setTimeout(() => proc.kill(), 2_000).unref();
     }
     this.rejectAll(new Error('Kernel was restarted'));
     this.updateStatus();
+    return exited;
   }
 
   dispose(): void {
@@ -199,6 +228,8 @@ export class KernelClient implements vscode.Disposable {
       PYTHONPATH: [pythonDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
       PYTHONIOENCODING: 'utf-8',
       PYTHONUNBUFFERED: '1',
+      // The kernel exits when this process (the extension host) has gone, even if its stdin never closes.
+      DUCKEXPLORER_PARENT_PID: String(process.pid),
     };
     this.log.info(`Starting kernel: ${python} -m duckexplorer_kernel (cwd ${cwd})`);
     this.statusItem.text = '$(loading~spin) DuckDB';

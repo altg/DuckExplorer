@@ -29,6 +29,62 @@ from .results import ResultExpired
 # cell runs or a write blocks on a pipe that nobody reads any more.
 EXIT_GRACE = 3.0
 
+def hard_exit(code: int = 0) -> None:
+    """Ends the process now, skipping interpreter teardown: user code may have left non-daemon threads
+    behind, and its flushes could block on pipes to an extension that went away. On Windows the process
+    terminates itself rather than calling ExitProcess, whose DLL detach handlers (native libraries'
+    thread pools) can hang and keep the process, and its database files, alive."""
+    with contextlib.suppress(Exception):
+        sys.stderr.flush()
+    if sys.platform == "win32":
+        with contextlib.suppress(Exception):
+            import ctypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+            kernel32.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+            kernel32.TerminateProcess(kernel32.GetCurrentProcess(), code)
+    os._exit(code)
+
+
+def watch_parent(pid: int) -> None:
+    """Exits once process `pid` (the VS Code extension host) has gone. Normally the kernel notices that
+    its stdin closed, but that never happens if another process inherited the pipe's write end."""
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = (ctypes.c_uint, ctypes.c_int, ctypes.c_uint)
+        kernel32.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+        synchronize, infinite, error_invalid_parameter = 0x00100000, 0xFFFFFFFF, 87
+        handle = kernel32.OpenProcess(synchronize, 0, pid)
+        if not handle:
+            if ctypes.get_last_error() == error_invalid_parameter:  # no such process: already gone
+                hard_exit(0)
+            return  # can't watch it (access denied?): rely on stdin
+        kernel32.WaitForSingleObject(handle, infinite)
+        hard_exit(0)
+    else:
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                hard_exit(0)
+            except OSError:
+                return  # exists but isn't ours to signal: rely on stdin
+            time.sleep(1.0)
+
+
+def _start_parent_watch() -> None:
+    try:
+        pid = int(os.environ.get("DUCKEXPLORER_PARENT_PID", ""))
+    except ValueError:
+        return
+    if pid > 0 and pid != os.getpid():
+        threading.Thread(target=watch_parent, args=(pid,), name="duckexplorer-parent", daemon=True).start()
+
+
 # Served on a side thread (with the side cursor) so they don't wait for a running cell.
 _SIDE_METHODS = {
     "schema",
@@ -152,7 +208,7 @@ class Server:
         # blocked writing outputs to the extension's end of a pipe that is still open but no longer read
         # (it never errors then): nothing reaches the extension any more either way, so exit regardless.
         time.sleep(EXIT_GRACE)
-        os._exit(0)
+        hard_exit(0)
 
     def _handle(self, message: dict) -> None:
         msg_id = message.get("id")
@@ -197,14 +253,11 @@ class Server:
 
 def main() -> None:
     code = 0
+    _start_parent_watch()
     try:
         Server().serve()
     except BaseException:  # e.g. the pipe to the extension broke
         code = 1
         with contextlib.suppress(Exception):
             traceback.print_exc()
-    # Skip interpreter teardown: user code may have left non-daemon threads behind, and its flushes
-    # could block on pipes to an extension that went away.
-    with contextlib.suppress(Exception):
-        sys.stderr.flush()
-    os._exit(code)
+    hard_exit(code)

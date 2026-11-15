@@ -104,6 +104,42 @@ def test_kernel_exits_when_the_extension_goes_away_mid_cell(tmp_path):
             proc.kill()
 
 
+def test_kernel_exits_when_its_parent_dies_with_stdin_still_open(tmp_path, sample_db):
+    """The extension host is gone, but its pipe to the kernel's stdin is still held open elsewhere (an
+    inherited handle), so no EOF ever comes: the kernel watches the parent's process and exits, letting go
+    of the database files it opened."""
+    parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(PYTHON_DIR),
+        "PYTHONIOENCODING": "utf-8",
+        "DUCKEXPLORER_PARENT_PID": str(parent.pid),
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "duckexplorer_kernel"],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert json.loads(proc.stdout.readline())["method"] == "ready"
+        proc.stdin.write((json.dumps({"id": 1, "method": "attach", "params": {"path": str(sample_db)}}) + "\n").encode())
+        proc.stdin.flush()
+        assert json.loads(proc.stdout.readline())["result"] == {"alias": "shop"}
+        parent.kill()
+        parent.wait()
+        assert proc.wait(timeout=10) == 0  # stdin is still open here
+        import duckdb
+
+        duckdb.connect(str(sample_db)).close()  # the lock is gone
+    finally:
+        for p in (proc, parent):
+            if p.poll() is None:
+                p.kill()
+
+
 def test_memory_info_is_answered_while_a_cell_runs(tmp_path):
     env = {**os.environ, "PYTHONPATH": str(PYTHON_DIR), "PYTHONIOENCODING": "utf-8"}
     proc = subprocess.Popen(

@@ -54,6 +54,7 @@ export interface DuckExplorerApi {
 export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   const log = vscode.window.createOutputChannel('DuckExplorer', { log: true });
   const kernel = new KernelClient(context.extensionPath, log, kernelSettings);
+  activeKernel = kernel;
   const attached = new AttachedDatabases(context.workspaceState);
   const opened = new OpenedFiles(context.workspaceState);
   const tree = new SchemaTreeProvider(kernel, attached, opened);
@@ -290,8 +291,12 @@ export function activate(context: vscode.ExtensionContext): DuckExplorerApi {
   return { kernel, tree, controller, summary, catalog, runner, history, historyView, treeDrop, sqlDrop, livePreview, sqlWriter };
 }
 
-export function deactivate(): void {
-  // Disposables registered in activate() stop the kernel.
+let activeKernel: KernelClient | undefined;
+
+export function deactivate(): Promise<void> | undefined {
+  // Wait for the kernel to exit (or kill it), so it doesn't outlive VS Code holding database files.
+  // Disposables registered in activate() run afterwards and find it stopped.
+  return activeKernel?.shutdown();
 }
 
 function kernelSettings(): Record<string, unknown> {
