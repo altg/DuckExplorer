@@ -6,6 +6,11 @@ All notable changes to DuckExplorer are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-15
+
+Result memory: a memory limit for query results, the kernel's memory in the status bar, and a DuckDB
+SQL language for notebook cells.
+
 ### Added
 
 - **Memory indicator**: the kernel's item in the status bar shows the memory the kernel process
@@ -38,6 +43,10 @@ All notable changes to DuckExplorer are listed here. The format follows
   about a second, and older results are dropped as a new one's rows arrive, so that three 10M-row
   cells peak at 1,450 MB of process memory (1,727 MB in 0.3.0, which kept all three and went on
   growing with each further one).
+- The kernel could keep running after VS Code exited, holding a lock on the database files it had
+  attached. It now exits once the VS Code extension host has gone, even if its stdin never closes,
+  ends itself outright on Windows so a native library can't hang its exit, and is killed if it
+  hasn't exited 1.5 seconds after the extension is deactivated.
 
 ## [0.3.0] - 2026-11-08
 
